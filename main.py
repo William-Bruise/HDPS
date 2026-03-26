@@ -192,7 +192,7 @@ if __name__ == "__main__":
     if 'gt' not in data:
         raise KeyError(f"Missing 'gt' in {opt['dataroot']}.")
     data['gt'] = torch.from_numpy(data['gt']).permute(2, 0, 1).unsqueeze(0).float().to(device)
-    Ch, ms = data['gt'].shape[1], data['gt'].shape[2]
+    Ch, Hh, Ww = data['gt'].shape[1], data['gt'].shape[2], data['gt'].shape[3]
     Rr = opt['rank']  # spectral dimensionality of subspace
     K = 1
     data['input'], model_condition = build_observation_from_gt(opt, data['gt'], param['task'], Ch)
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     for j in range(opt['samplenum']):
         sample, E = diffusion.p_sample_loop(
             model,
-            (1, Ch, ms, ms),
+            (1, Ch, Hh, Ww),
             Rr=Rr,
             step=step,
             clip_denoised=True,
@@ -246,7 +246,8 @@ if __name__ == "__main__":
         sample = (sample + 1) / 2
         if sample.shape[1] != Rr * K:
             sample = denoise_model(sample)
-        im_out = th.matmul(E, sample.reshape(opt['batch_size'], Rr * K, -1)).reshape(opt['batch_size'], Ch, ms, ms)
+        bsz = sample.shape[0]
+        im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
         im_out = th.clip(im_out, 0, 1)
         time_end = time.time()
         time_cost = time_end - time_start
