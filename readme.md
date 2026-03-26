@@ -28,12 +28,15 @@ checkpoints/diffusion/I190000_E97_gen.pth
 - `--factor_lr`：矩阵因子加性微调学习率。
 - `--adapter_hidden`：轻量适配器隐藏通道数。
 - `--no_rrqr`：关闭 RRQR（关闭后改为等间隔选带）。
+- `--dataroot`：可以是 `.mat` 文件路径，也可以是目录（如 `data/`）。
+- `--data_file`：当 `--dataroot` 是目录时，指定文件名（如 `car.mat`）。
 
 ### Denoise
 ```bash
 python main.py \
   -eta1 16 -eta2 10 --k 8 -step 20 \
   -dn Houston --task denoise --task_params 50 \
+  --dataroot data --data_file car.mat \
   --rank 6 --posterior_update_steps 1 \
   --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
   -gpu 0 --beta_schedule exp
@@ -44,6 +47,7 @@ python main.py \
 python main.py \
   -eta1 500 -eta2 12 --k 8 -step 20 \
   -dn WDC --task sr --task_params 0.25 \
+  --dataroot data --data_file animal_garden.mat \
   --rank 6 --posterior_update_steps 1 \
   --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
   -gpu 0 --beta_schedule exp
@@ -54,6 +58,7 @@ python main.py \
 python main.py \
   -eta1 8 -eta2 6 --k 5 -step 20 \
   -dn Salinas --task inpainting --task_params 0.8 \
+  --dataroot data --data_file chaos_traffic.mat \
   --rank 6 --posterior_update_steps 1 \
   --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
   -gpu 0 --beta_schedule exp
@@ -64,6 +69,7 @@ python main.py \
 python main.py \
   -eta1 16 -eta2 10 --k 8 -step 20 \
   -dn Houston --task denoise --task_params 50 \
+  --dataroot data --data_file fruit.mat \
   --rank 6 --posterior_update_steps 0 \
   -gpu 0 --beta_schedule exp
 ```
@@ -71,7 +77,6 @@ python main.py \
 ---
 
 ## 3) 数据存储格式（`.mat`）
-
 
 现在运行脚本会**根据 `gt` 自动合成 `input`**，所以 `.mat` 最少只需要：
 
@@ -87,14 +92,12 @@ python main.py \
 - 你仍然可以在 `.mat` 里额外放其他字段，但当前脚本只依赖 `gt`。
 - `gt` 会被加载为 `[1, C, H, W]` 张量参与后续流程。
 
-
 ---
 
 ## 4) 数据路径约定
 
-`main.py` 会根据以下参数自动拼接测试路径：
-- `--dataname` in `{Houston, WDC, Salinas}`
-- `--task` in `{denoise, sr, inpainting}`
-- `--task_params`（如 `50`, `0.25`, `0.8`）
-
-请按项目现有目录结构组织数据文件。
+`main.py` 读取优先级：
+1. 若 `--dataroot` 直接是 `.mat` 文件，直接读取该文件。  
+2. 若 `--dataroot` 是目录且指定了 `--data_file`，读取该文件。  
+3. 若 `--dataroot` 是目录但未指定 `--data_file`，自动读取目录下按字母序第一个 `.mat` 文件。  
+4. 若 `--dataroot` 不存在，才回退到历史的 `dataname/task/task_params` 路径拼接逻辑。

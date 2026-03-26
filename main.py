@@ -25,6 +25,8 @@ def parse_args_and_config():
     parser.add_argument('-c', '--baseconfig', type=str, default='configs/base.json',
                         help='JSON file for creating model and diffusion')
     parser.add_argument('-dr', '--dataroot', type=str, default='data')  # dataroot with
+    parser.add_argument('--data_file', type=str, default='',
+                        help='Optional .mat file name when dataroot is a directory, e.g. car.mat')
     parser.add_argument('-rs', '--resume_state', type=str,
                         default='checkpoints/diffusion/I190000_E97')
 
@@ -111,29 +113,45 @@ if __name__ == "__main__":
     param['eta2'] = opt['eta2']
 
 
-    if opt['dataname'] == 'Houston':
-        if opt['task'] == 'denoise':
-            opt['dataroot'] = f'../data/Houston18/test/gauss_{opt["task_params"]}/Houston_channel_cropped.mat'
-        if opt['task'] == 'sr':
-            opt['dataroot'] = f'../data/Houston18/test/gauss_sr_{opt["task_params"]}/Houston_channel_cropped.mat'
-        if opt['task'] == 'inpainting':
-            opt['dataroot'] = f'../data/Houston18/test/gauss_inpainting_{opt["task_params"]}/Houston_channel_cropped.mat'
+    input_path = Path(opt['dataroot'])
+    if not input_path.exists():
+        if opt['dataname'] == 'Houston':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_sr_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_inpainting_{opt["task_params"]}/Houston_channel_cropped.mat'
 
-    if opt['dataname'] == 'WDC':
-        if opt['task'] == 'denoise':
-            opt['dataroot'] = f'../data/WDC/test/gauss_{opt["task_params"]}/wdc_cropped.mat'
-        if opt['task'] == 'sr':
-            opt['dataroot'] = f'../data/WDC/test/gauss_sr_{opt["task_params"]}/wdc_cropped.mat'
-        if opt['task'] == 'inpainting':
-            opt['dataroot'] = f'../data/WDC/test/gauss_inpainting_{opt["task_params"]}/wdc_cropped.mat'
+        if opt['dataname'] == 'WDC':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/WDC/test/gauss_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/WDC/test/gauss_sr_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/WDC/test/gauss_inpainting_{opt["task_params"]}/wdc_cropped.mat'
 
-    if opt['dataname'] == 'Salinas':
-        if opt['task'] == 'denoise':
-            opt['dataroot'] = f'../data/Salinas/test/gauss_{opt["task_params"]}/Salinas_channel_cropped.mat'
-        if opt['task'] == 'sr':
-            opt['dataroot'] = f'../data/Salinas/test/gauss_sr_{opt["task_params"]}/Salinas_channel_cropped.mat'
-        if opt['task'] == 'inpainting':
-            opt['dataroot'] = f'../data/Salinas/test/gauss_inpainting_{opt["task_params"]}/Salinas_channel_cropped.mat'
+        if opt['dataname'] == 'Salinas':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_sr_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_inpainting_{opt["task_params"]}/Salinas_channel_cropped.mat'
+
+    input_path = Path(opt['dataroot'])
+    if input_path.is_dir():
+        if opt['data_file']:
+            input_path = input_path / opt['data_file']
+            if not input_path.exists():
+                raise FileNotFoundError(f"Cannot find data file: {input_path}")
+        else:
+            mat_files = sorted(input_path.glob("*.mat"))
+            if not mat_files:
+                raise FileNotFoundError(f"No .mat file found under directory: {input_path}")
+            input_path = mat_files[0]
+            print(f"[INFO] Using first .mat file in directory: {input_path.name}")
+    opt['dataroot'] = str(input_path)
 
 
     data = sio.loadmat(opt['dataroot'])
