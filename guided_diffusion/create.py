@@ -11,7 +11,6 @@ class LightweightAdapter(nn.Module):
             nn.SiLU(),
             nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True),
 
-
     def forward(self, x):
         return self.adapter(x)
 
