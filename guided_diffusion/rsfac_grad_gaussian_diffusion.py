@@ -228,8 +228,8 @@ class GaussianDiffusion:
 
             # DDIM: Algorithm 1 in the paper
             model_output = model(x, alphas_bar)
-            if adapter_model is not None:
-                model_output = model_output + adapter_model(x)
+            # NOTE: adapter_model is dedicated to spectral-rank projection via
+            # _project_to_rank(...), so we do not add it as a diffusion residual.
             pred_xstart = (x - model_output * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
             if clip_denoised:
                 pred_xstart = pred_xstart.clamp(-1, 1)
