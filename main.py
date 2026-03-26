@@ -20,6 +20,77 @@ from math import sqrt, log
 import warnings
 import matplotlib
 
+def resolve_input_path(opt):
+    input_path = Path(opt['dataroot'])
+    if not input_path.exists():
+        if opt['dataname'] == 'Houston':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_sr_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_inpainting_{opt["task_params"]}/Houston_channel_cropped.mat'
+
+        if opt['dataname'] == 'WDC':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/WDC/test/gauss_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/WDC/test/gauss_sr_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/WDC/test/gauss_inpainting_{opt["task_params"]}/wdc_cropped.mat'
+
+        if opt['dataname'] == 'Salinas':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_sr_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_inpainting_{opt["task_params"]}/Salinas_channel_cropped.mat'
+
+    input_path = Path(opt['dataroot'])
+    if input_path.is_dir():
+        if opt['data_file']:
+            input_path = input_path / opt['data_file']
+            if not input_path.exists():
+                raise FileNotFoundError(f"Cannot find data file: {input_path}")
+        else:
+            mat_files = sorted(input_path.glob("*.mat"))
+            if not mat_files:
+                raise FileNotFoundError(f"No .mat file found under directory: {input_path}")
+            input_path = mat_files[0]
+            print(f"[INFO] Using first .mat file in directory: {input_path.name}")
+    return str(input_path)
+
+
+def build_observation_from_gt(opt, gt, task, ch):
+    sigma_from_param = float(opt['task_params']) if task == 'denoise' else 0.0
+    model_condition = {'gt': gt, 'sigma': sigma_from_param}
+    if task == 'inpainting':
+        mask_rate = float(opt['task_params'])
+        if not (0 <= mask_rate < 1):
+            raise ValueError(f"inpainting task_params should be in [0,1), got {mask_rate}")
+        model_condition['mask'] = (th.rand_like(gt) > mask_rate).float()
+        input_data = gt * model_condition['mask']
+        model_condition['transform'] = lambda x: x
+    elif task == 'sr':
+        k_s = 9
+        sig = sqrt(4 ** 2 / (8 * log(2)))
+        scale = float(opt['task_params'])
+        kernel = blur_kernel(k_s, sig)
+        kernel = th.from_numpy(kernel).repeat(ch,1,1,1).to(gt.device)
+        blur = partial(nF.conv2d, weight=kernel, padding=int((k_s - 1) / 2), groups=ch)
+        down = partial(imresize, scale=scale)
+        model_condition['transform'] = lambda x: down(blur(x))
+        input_data = model_condition['transform'](gt)
+    else:
+        sigma = float(opt['task_params'])
+        noise_std = sigma / 255.0
+        input_data = th.clamp(gt + noise_std * th.randn_like(gt), 0.0, 1.0)
+        model_condition['transform'] = lambda x: x
+    model_condition['input'] = input_data
+    return input_data, model_condition
+
+
 def parse_args_and_config():
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--baseconfig', type=str, default='configs/base.json',
@@ -113,45 +184,7 @@ if __name__ == "__main__":
     param['eta2'] = opt['eta2']
 
 
-    input_path = Path(opt['dataroot'])
-    if not input_path.exists():
-        if opt['dataname'] == 'Houston':
-            if opt['task'] == 'denoise':
-                opt['dataroot'] = f'../data/Houston18/test/gauss_{opt["task_params"]}/Houston_channel_cropped.mat'
-            if opt['task'] == 'sr':
-                opt['dataroot'] = f'../data/Houston18/test/gauss_sr_{opt["task_params"]}/Houston_channel_cropped.mat'
-            if opt['task'] == 'inpainting':
-                opt['dataroot'] = f'../data/Houston18/test/gauss_inpainting_{opt["task_params"]}/Houston_channel_cropped.mat'
-
-        if opt['dataname'] == 'WDC':
-            if opt['task'] == 'denoise':
-                opt['dataroot'] = f'../data/WDC/test/gauss_{opt["task_params"]}/wdc_cropped.mat'
-            if opt['task'] == 'sr':
-                opt['dataroot'] = f'../data/WDC/test/gauss_sr_{opt["task_params"]}/wdc_cropped.mat'
-            if opt['task'] == 'inpainting':
-                opt['dataroot'] = f'../data/WDC/test/gauss_inpainting_{opt["task_params"]}/wdc_cropped.mat'
-
-        if opt['dataname'] == 'Salinas':
-            if opt['task'] == 'denoise':
-                opt['dataroot'] = f'../data/Salinas/test/gauss_{opt["task_params"]}/Salinas_channel_cropped.mat'
-            if opt['task'] == 'sr':
-                opt['dataroot'] = f'../data/Salinas/test/gauss_sr_{opt["task_params"]}/Salinas_channel_cropped.mat'
-            if opt['task'] == 'inpainting':
-                opt['dataroot'] = f'../data/Salinas/test/gauss_inpainting_{opt["task_params"]}/Salinas_channel_cropped.mat'
-
-    input_path = Path(opt['dataroot'])
-    if input_path.is_dir():
-        if opt['data_file']:
-            input_path = input_path / opt['data_file']
-            if not input_path.exists():
-                raise FileNotFoundError(f"Cannot find data file: {input_path}")
-        else:
-            mat_files = sorted(input_path.glob("*.mat"))
-            if not mat_files:
-                raise FileNotFoundError(f"No .mat file found under directory: {input_path}")
-            input_path = mat_files[0]
-            print(f"[INFO] Using first .mat file in directory: {input_path.name}")
-    opt['dataroot'] = str(input_path)
+    opt['dataroot'] = resolve_input_path(opt)
 
 
     data = sio.loadmat(opt['dataroot'])
@@ -161,31 +194,7 @@ if __name__ == "__main__":
     Ch, ms = data['gt'].shape[1], data['gt'].shape[2]
     Rr = opt['rank']  # spectral dimensionality of subspace
     K = 1
-    sigma_from_param = float(opt['task_params']) if opt['task'] == 'denoise' else 0.0
-    model_condition = {'gt': data['gt'], 'sigma': sigma_from_param}
-    if param['task'] == 'inpainting':
-        mask_rate = float(opt['task_params'])
-        if not (0 <= mask_rate < 1):
-            raise ValueError(f"inpainting task_params should be in [0,1), got {mask_rate}")
-        model_condition['mask'] = (th.rand_like(data['gt']) > mask_rate).float()
-        data['input'] = data['gt'] * model_condition['mask']
-        model_condition['transform'] = lambda x: x
-    elif param['task'] == 'sr':
-        k_s = 9
-        sig = sqrt(4 ** 2 / (8 * log(2)))
-        scale = float(opt['task_params'])
-        kernel = blur_kernel(k_s, sig)
-        kernel = th.from_numpy(kernel).repeat(Ch,1,1,1).to(device)
-        blur = partial(nF.conv2d, weight=kernel, padding=int((k_s - 1) / 2), groups=Ch)
-        down = partial(imresize, scale=scale)
-        model_condition['transform'] = lambda x: down(blur(x))
-        data['input'] = model_condition['transform'](data['gt'])
-    else:
-        sigma = float(opt['task_params'])
-        noise_std = sigma / 255.0
-        data['input'] = th.clamp(data['gt'] + noise_std * th.randn_like(data['gt']), 0.0, 1.0)
-        model_condition['transform'] = lambda x: x
-    model_condition['input'] = data['input']
+    data['input'], model_condition = build_observation_from_gt(opt, data['gt'], param['task'], Ch)
 
     time_start = time.time()
     u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))

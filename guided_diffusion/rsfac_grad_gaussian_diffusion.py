@@ -213,9 +213,7 @@ class GaussianDiffusion:
                     pred_xstart_u = (x_update - model_output_u * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
                     if clip_denoised:
                         pred_xstart_u = pred_xstart_u.clamp(-1, 1)
-                    latent_u = adapter_model(pred_xstart_u)
-                    if latent_u.shape[1] != Rr:
-                        raise ValueError(f"Adapter output channel {latent_u.shape[1]} must equal rank r ({Rr}).")
+                    latent_u = self._project_to_rank(adapter_model, pred_xstart_u, Rr)
                     E_tune_u = factor_model()
                     xhat_u = (latent_u + 1) / 2
                     xhat_u = th.matmul(E_tune_u, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
@@ -238,9 +236,7 @@ class GaussianDiffusion:
 
             # update
             E_tune = factor_model()
-            latent = adapter_model(pred_xstart)
-            if latent.shape[1] != Rr:
-                raise ValueError(f"Adapter output channel {latent.shape[1]} must equal rank r ({Rr}).")
+            latent = self._project_to_rank(adapter_model, pred_xstart, Rr)
             xhat = (latent + 1) / 2
             xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
 
@@ -299,6 +295,12 @@ class GaussianDiffusion:
         if param['task'] == 'inpainting':
             return self.loss_inpainting(param, model_condition, xhat)
         raise ValueError('invalid task name')
+
+    def _project_to_rank(self, adapter_model, pred_xstart, rank):
+        latent = adapter_model(pred_xstart)
+        if latent.shape[1] != rank:
+            raise ValueError(f"Adapter output channel {latent.shape[1]} must equal rank r ({rank}).")
+        return latent
 
 
     def loss_sr(self, param, model_condition, xhat):
