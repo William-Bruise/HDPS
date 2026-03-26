@@ -9,7 +9,7 @@ import torch as th
 import torch.nn.functional as nF
 from pathlib import Path
 from guided_diffusion import utils
-from guided_diffusion.create import create_model_and_diffusion_RS
+from guided_diffusion.create import create_model_and_diffusion_RS, LightweightAdapter
 import scipy.io as sio
 from collections import OrderedDict
 from os.path import join
@@ -33,6 +33,10 @@ def parse_args_and_config():
     parser.add_argument('-eta2', '--eta2', type=float, default=2)
     parser.add_argument('--k', type=float, default=8)
     parser.add_argument('-step', '--step', type=int, default=20)
+    parser.add_argument('--posterior_update_steps', type=int, default=1)
+    parser.add_argument('--adapter_lr', type=float, default=1e-4)
+    parser.add_argument('--factor_lr', type=float, default=5e-3)
+    parser.add_argument('--adapter_hidden', type=int, default=16)
 
     # datasets
     parser.add_argument('-dn', '--dataname', type=str, default='WDC',
@@ -92,6 +96,8 @@ if __name__ == "__main__":
     model.load_state_dict(new_cks, strict=False)
     model.to(device)
     model.eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
 
     ## seed
     seeed = opt['seed']
@@ -166,12 +172,18 @@ if __name__ == "__main__":
         param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)
     print(param['Band'])
 
-    denoise_model = None
-    denoise_optim = None
+    if opt['posterior_update_steps'] > 0:
+        denoise_model = LightweightAdapter(Rr * K, hidden_channels=opt['adapter_hidden']).to(device)
+        denoise_optim = th.optim.Adam(denoise_model.parameters(), lr=opt['adapter_lr'])
+    else:
+        denoise_model = None
+        denoise_optim = None
     denoised_fn = {
         'denoise_model': denoise_model,
         'denoise_optim': denoise_optim
     }
+    param['posterior_update_steps'] = opt['posterior_update_steps']
+    param['factor_lr'] = opt['factor_lr']
     step = opt['step']
     dname = opt['dataname']
     for j in range(opt['samplenum']):
@@ -200,8 +212,4 @@ if __name__ == "__main__":
 
         print('best psnr: %.2f, best ssim: %.2f,' %
               (MSIQA(im_out, data['gt'])[0], MSIQA(im_out, data['gt'])[1]))
-
-
-
-
 

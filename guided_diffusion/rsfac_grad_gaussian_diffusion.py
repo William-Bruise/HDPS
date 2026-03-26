@@ -11,6 +11,7 @@ import numpy as np
 import torch as th
 from torch.autograd import grad
 import torch.nn.functional as nF
+import torch.nn as nn
 from functools import partial
 import torch.nn.parameter as Para
 from .utils import *
@@ -62,6 +63,16 @@ class Param(th.nn.Module):
     
     def forward(self,):
         return self.E
+
+
+class AdditiveMatrixFinetune(nn.Module):
+    def __init__(self, base_matrix):
+        super().__init__()
+        self.base_matrix = base_matrix.detach().clone()
+        self.delta = Para.Parameter(th.zeros_like(self.base_matrix))
+
+    def forward(self):
+        return self.base_matrix + self.delta
 
 class GaussianDiffusion:
     """
@@ -167,7 +178,14 @@ class GaussianDiffusion:
         v[:, :, 1] *= -1
         E = v[..., :, :3]
         coef = th.inverse(th.index_select(E, 1, param['Band']))
-        E = E @ coef
+        E_base = E @ coef
+
+        adapter_model = denoised_fn.get('denoise_model', None) if denoised_fn is not None else None
+        adapter_optim = denoised_fn.get('denoise_optim', None) if denoised_fn is not None else None
+        if adapter_model is not None:
+            adapter_model.train()
+        factor_model = AdditiveMatrixFinetune(E_base).to(device)
+        factor_optim = th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
 
         self.best_result, self.best_psnr = None, 0
         norm_list, psnr_list, result_list = [], [], []
@@ -185,15 +203,40 @@ class GaussianDiffusion:
             alphas_bar_next = th.FloatTensor([self.alphas_cumprod_prev[int(t_next.item()) + 1]]).repeat(B, 1).to(
                 x.device)
 
+            with th.enable_grad():
+                inner_steps = max(0, int(param.get('posterior_update_steps', 0)))
+                for _ in range(inner_steps):
+                    x_update = img.detach()
+                    model_output_u = model(x_update, alphas_bar)
+                    if adapter_model is not None:
+                        model_output_u = model_output_u + adapter_model(x_update)
+                    pred_xstart_u = (x_update - model_output_u * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
+                    if clip_denoised:
+                        pred_xstart_u = pred_xstart_u.clamp(-1, 1)
+                    E_tune_u = factor_model()
+                    xhat_u = (pred_xstart_u + 1) / 2
+                    xhat_u = th.matmul(E_tune_u, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
+                    loss_update = self._condition_loss(param, model_condition, xhat_u)
+                    if adapter_optim is not None:
+                        adapter_optim.zero_grad()
+                    factor_optim.zero_grad()
+                    loss_update.backward()
+                    if adapter_optim is not None:
+                        adapter_optim.step()
+                    factor_optim.step()
+
             # DDIM: Algorithm 1 in the paper
             model_output = model(x, alphas_bar)
+            if adapter_model is not None:
+                model_output = model_output + adapter_model(x)
             pred_xstart = (x - model_output * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
             if clip_denoised:
                 pred_xstart = pred_xstart.clamp(-1, 1)
 
             # update
+            E_tune = factor_model()
             xhat = (pred_xstart + 1) / 2
-            xhat = th.matmul(E, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
+            xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
 
             # parameters
             eta = 0
@@ -205,14 +248,7 @@ class GaussianDiffusion:
             xt_next = alphas_bar_next.sqrt() * pred_xstart + c1 * th.randn_like(x) + c2 * model_output
 
             param['iteration'] = iteration
-            if param['task'] == 'sr':
-                loss_condition = self.loss_sr(param, model_condition, xhat)
-            elif param['task'] == 'denoise':
-                loss_condition = self.loss_denoise(param, model_condition, xhat)
-            elif param['task'] == 'inpainting':
-                loss_condition = self.loss_inpainting(param, model_condition, xhat)
-            else:
-                raise ValueError('invalid task name')
+            loss_condition = self._condition_loss(param, model_condition, xhat)
 
             norm_gradX = grad(outputs=loss_condition, inputs=img)[0]
             xt_next = xt_next - norm_gradX
@@ -220,7 +256,7 @@ class GaussianDiffusion:
 
 
             out = {"sample": xt_next, "pred_xstart": pred_xstart}
-            yield out, E
+            yield out, E_tune.detach()
             img = out["sample"]
             # Clears out small amount of gpu memory. If not used, memory usage will accumulate and OOM will occur.
             img.detach_()
@@ -248,6 +284,15 @@ class GaussianDiffusion:
         # plt.plot(norm_list)
         # plt.ylabel('guidance function loss')
         # plt.show()
+
+    def _condition_loss(self, param, model_condition, xhat):
+        if param['task'] == 'sr':
+            return self.loss_sr(param, model_condition, xhat)
+        if param['task'] == 'denoise':
+            return self.loss_denoise(param, model_condition, xhat)
+        if param['task'] == 'inpainting':
+            return self.loss_inpainting(param, model_condition, xhat)
+        raise ValueError('invalid task name')
 
 
     def loss_sr(self, param, model_condition, xhat):
@@ -352,5 +397,4 @@ class GaussianDiffusion:
         xt_next = noise_level_next.sqrt() * pred_xstart + c1 * th.randn_like(x) + c2 * model_output
         out = {"sample": xt_next, "pred_xstart": pred_xstart}
         return out
-
 
