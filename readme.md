@@ -33,6 +33,22 @@ checkpoints/diffusion/I190000_E97_gen.pth
 - `--dataroot`：可以是 `.mat` 文件路径，也可以是目录（如 `data/`）。
 - `--data_file`：当 `--dataroot` 是目录时，指定文件名（如 `car.mat`）。
 
+### 先看你的目录怎么传参（对应你截图）
+你的目录是：
+```bash
+/home/wuweihao/HDPS/data/
+```
+而 `.mat` 文件在该目录下（如 `ironman.mat`, `car.mat`, `animal_garden.mat` ...），
+所以运行时统一用：
+```bash
+--dataroot /home/wuweihao/HDPS/data --data_file <文件名.mat>
+```
+
+例如：
+```bash
+--dataroot /home/wuweihao/HDPS/data --data_file ironman.mat
+```
+
 ### Denoise
 ```bash
 ./denoise.sh
@@ -56,6 +72,31 @@ python main.py \
   --dataroot data --data_file fruit.mat \
   --rank 6 --posterior_update_steps 0 \
   -gpu 0 --beta_schedule exp
+```
+
+### 直接跑你截图里的 5 个文件（示例）
+> 下面以 denoise 为例；你可以把 `--task` 和 `--task_params` 改成 `sr` / `inpainting` 对应配置。
+
+```bash
+python main.py -dn Houston --task denoise --task_params 50 --rank 6 --posterior_update_steps 1 \
+  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 --k 8 -step 20 -gpu 0 --beta_schedule exp \
+  --dataroot /home/wuweihao/HDPS/data --data_file ironman.mat
+
+python main.py -dn Houston --task denoise --task_params 50 --rank 6 --posterior_update_steps 1 \
+  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 --k 8 -step 20 -gpu 0 --beta_schedule exp \
+  --dataroot /home/wuweihao/HDPS/data --data_file car.mat
+
+python main.py -dn Houston --task denoise --task_params 50 --rank 6 --posterior_update_steps 1 \
+  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 --k 8 -step 20 -gpu 0 --beta_schedule exp \
+  --dataroot /home/wuweihao/HDPS/data --data_file animal_garden.mat
+
+python main.py -dn Houston --task denoise --task_params 50 --rank 6 --posterior_update_steps 1 \
+  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 --k 8 -step 20 -gpu 0 --beta_schedule exp \
+  --dataroot /home/wuweihao/HDPS/data --data_file fruit.mat
+
+python main.py -dn Houston --task denoise --task_params 50 --rank 6 --posterior_update_steps 1 \
+  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 --k 8 -step 20 -gpu 0 --beta_schedule exp \
+  --dataroot /home/wuweihao/HDPS/data --data_file chaos_traffic.mat
 ```
 
 ---
