@@ -202,6 +202,7 @@ if __name__ == "__main__":
     E = v[..., :, :Rr*K]
 
     if not opt['no_rrqr']:
+        print('[INFO] RRQR backend: pure-python (utility.srrqr)')
         _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
         param['Band'] = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
 
