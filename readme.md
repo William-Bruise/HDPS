@@ -72,23 +72,21 @@ python main.py \
 
 ## 3) 数据存储格式（`.mat`）
 
-程序会从 `.mat` 中读取以下键名：
 
-### 通用键（所有任务必须有）
-- `input`：退化高光谱图像，shape = `[H, W, C]`
-- `gt`：真值高光谱图像，shape = `[H, W, C]`
-- `sigma`：噪声相关参数（标量或数组，按你数据生成流程保存）
+现在运行脚本会**根据 `gt` 自动合成 `input`**，所以 `.mat` 最少只需要：
 
-### SR 任务额外键（`--task sr`）
-- `scale`：下采样比例（例如 `0.25` 对应 x4 超分）
+### 必需键
+- `gt`：真值高光谱图像，shape = `[H, W, C]`，建议 `float32`
 
-### Inpainting 任务额外键（`--task inpainting`）
-- `mask`：掩膜，shape = `[H, W, C]`，建议 0/1
+### 按任务自动合成退化观测
+- `--task denoise`：按 `--task_params` 指定的噪声强度（如 `50`）自动加高斯噪声生成 `input`
+- `--task inpainting`：按 `--task_params` 指定的遮挡率（如 `0.8`）自动采样 mask，并生成 `input = gt * mask`
+- `--task sr`：按 `--task_params` 指定的缩放比例（如 `0.25`）自动做 blur+downsample 生成 `input`
 
-### 命名与类型建议
-- 键名严格使用：`input`, `gt`, `sigma`, `scale`, `mask`
-- `input` 和 `gt` 建议保存为 `float32`
-- `input` 与 `gt` 的空间大小、波段数必须一致
+### 说明
+- 你仍然可以在 `.mat` 里额外放其他字段，但当前脚本只依赖 `gt`。
+- `gt` 会被加载为 `[1, C, H, W]` 张量参与后续流程。
+
 
 ---
 

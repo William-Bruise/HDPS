@@ -137,26 +137,37 @@ if __name__ == "__main__":
 
 
     data = sio.loadmat(opt['dataroot'])
-    data['input'] = torch.from_numpy(data['input']).permute(2, 0, 1).unsqueeze(0).float().to(device)
+    if 'gt' not in data:
+        raise KeyError(f"Missing 'gt' in {opt['dataroot']}.")
     data['gt'] = torch.from_numpy(data['gt']).permute(2, 0, 1).unsqueeze(0).float().to(device)
     Ch, ms = data['gt'].shape[1], data['gt'].shape[2]
     Rr = opt['rank']  # spectral dimensionality of subspace
     K = 1
-    model_condition = {'input': data['input'], 'gt': data['gt'], 'sigma': data['sigma']}
+    sigma_from_param = float(opt['task_params']) if opt['task'] == 'denoise' else 0.0
+    model_condition = {'gt': data['gt'], 'sigma': sigma_from_param}
     if param['task'] == 'inpainting':
-        model_condition['mask'] = torch.from_numpy(data['mask'][None]).to(device).permute(0, 3, 1, 2)
+        mask_rate = float(opt['task_params'])
+        if not (0 <= mask_rate < 1):
+            raise ValueError(f"inpainting task_params should be in [0,1), got {mask_rate}")
+        model_condition['mask'] = (th.rand_like(data['gt']) > mask_rate).float()
+        data['input'] = data['gt'] * model_condition['mask']
         model_condition['transform'] = lambda x: x
     elif param['task'] == 'sr':
         k_s = 9
         sig = sqrt(4 ** 2 / (8 * log(2)))
-        scale = data['scale'].item()
+        scale = float(opt['task_params'])
         kernel = blur_kernel(k_s, sig)
         kernel = th.from_numpy(kernel).repeat(Ch,1,1,1).to(device)
         blur = partial(nF.conv2d, weight=kernel, padding=int((k_s - 1) / 2), groups=Ch)
         down = partial(imresize, scale=scale)
         model_condition['transform'] = lambda x: down(blur(x))
+        data['input'] = model_condition['transform'](data['gt'])
     else:
+        sigma = float(opt['task_params'])
+        noise_std = sigma / 255.0
+        data['input'] = th.clamp(data['gt'] + noise_std * th.randn_like(data['gt']), 0.0, 1.0)
         model_condition['transform'] = lambda x: x
+    model_condition['input'] = data['input']
 
     time_start = time.time()
     u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))
