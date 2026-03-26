@@ -244,7 +244,9 @@ if __name__ == "__main__":
         )
         K = int(len(param['Band']) / Rr)
         sample = (sample + 1) / 2
-        im_out = th.matmul(E, sample.reshape(opt['batch_size'], Rr*K, -1)).reshape(opt['batch_size'], Ch, ms, ms)
+        if sample.shape[1] != Rr * K:
+            sample = denoise_model(sample)
+        im_out = th.matmul(E, sample.reshape(opt['batch_size'], Rr * K, -1)).reshape(opt['batch_size'], Ch, ms, ms)
         im_out = th.clip(im_out, 0, 1)
         time_end = time.time()
         time_cost = time_end - time_start
