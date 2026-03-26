@@ -19,6 +19,7 @@ from guided_diffusion.core import imresize, blur_kernel
 from math import sqrt, log
 import warnings
 import matplotlib
+from utility.srrqr import srrqr_rank
 
 def resolve_input_path(opt):
     input_path = Path(opt['dataroot'])
@@ -201,11 +202,9 @@ if __name__ == "__main__":
     E = v[..., :, :Rr*K]
 
     if not opt['no_rrqr']:
-        import matlab.engine
-        eng = matlab.engine.start_matlab()
-        eng.cd(r'matlab')
-        res = eng.sRRQR_rank(E[0].cpu().numpy().T, 1.2, Rr, nargout=3)
-        param['Band'] = th.Tensor(np.sort(list(res[-1][0][:Rr]))).type(th.int).to(device)-1
+        print('[INFO] RRQR backend: pure-python (utility.srrqr)')
+        _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
+        param['Band'] = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
 
     else:
         param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)

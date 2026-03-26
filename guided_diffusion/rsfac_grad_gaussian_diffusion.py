@@ -190,6 +190,7 @@ class GaussianDiffusion:
         factor_optim = th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
 
         self.best_result, self.best_psnr = None, 0
+        adapter_residual_disabled_logged = False
         norm_list, psnr_list, result_list = [], [], []
         alphas_bar_list = []
         for iteration, (i, j) in pbar:
@@ -229,7 +230,12 @@ class GaussianDiffusion:
             # DDIM: Algorithm 1 in the paper
             model_output = model(x, alphas_bar)
             if adapter_model is not None:
-                model_output = model_output + adapter_model(x)
+                adapter_out = adapter_model(x)
+                if adapter_out.shape[1] == model_output.shape[1]:
+                    model_output = model_output + adapter_out
+                elif not adapter_residual_disabled_logged:
+                    print(f"[WARN] Skip adapter residual add: adapter channels={adapter_out.shape[1]} != model channels={model_output.shape[1]}")
+                    adapter_residual_disabled_logged = True
             pred_xstart = (x - model_output * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
             if clip_denoised:
                 pred_xstart = pred_xstart.clamp(-1, 1)
