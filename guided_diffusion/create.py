@@ -3,14 +3,14 @@ import torch.nn as nn
 
 
 class LightweightAdapter(nn.Module):
-    def __init__(self, channels, hidden_channels=16):
+    def __init__(self, in_channels, out_channels, hidden_channels=16):
         super().__init__()
         hidden_channels = max(1, hidden_channels)
         self.adapter = nn.Sequential(
-            nn.Conv2d(channels, hidden_channels, kernel_size=1, bias=True),
+            nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=True),
             nn.SiLU(),
-            nn.Conv2d(hidden_channels, channels, kernel_size=1, bias=True),
-        )
+            nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True),
+
 
     def forward(self, x):
         return self.adapter(x)

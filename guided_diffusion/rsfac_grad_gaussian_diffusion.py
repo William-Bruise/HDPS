@@ -161,10 +161,11 @@ class GaussianDiffusion:
         if device is None:
             device = next(model.parameters()).device
         assert isinstance(shape, (tuple, list))
+        model_channels = denoised_fn.get('model_channels', Rr) if denoised_fn is not None else Rr
         if noise is not None:
             img = noise
         else:
-            img = th.randn((Bb, Rr, Hh, Ww), device=device) # 初始大小是[B, r, H, W]
+            img = th.randn((Bb, model_channels, Hh, Ww), device=device)
 
         if step is None:
             step = self.num_timesteps
@@ -176,14 +177,16 @@ class GaussianDiffusion:
         # coefficient matrix estimation: Eq.(14)
         u, s, v = th.svd(model_condition['input'].reshape(Bb, Cc, -1).permute(0, 2, 1))
         v[:, :, 1] *= -1
-        E = v[..., :, :3]
+        E = v[..., :, :Rr]
         coef = th.inverse(th.index_select(E, 1, param['Band']))
         E_base = E @ coef
 
         adapter_model = denoised_fn.get('denoise_model', None) if denoised_fn is not None else None
         adapter_optim = denoised_fn.get('denoise_optim', None) if denoised_fn is not None else None
-        if adapter_model is not None:
-            adapter_model.train()
+        if adapter_model is None:
+            raise ValueError("denoise_model(adapter) must be provided to map diffusion output channels to rank r.")
+        adapter_model.train()
+
         factor_model = AdditiveMatrixFinetune(E_base).to(device)
         factor_optim = th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
 
@@ -208,13 +211,15 @@ class GaussianDiffusion:
                 for _ in range(inner_steps):
                     x_update = img.detach()
                     model_output_u = model(x_update, alphas_bar)
-                    if adapter_model is not None:
-                        model_output_u = model_output_u + adapter_model(x_update)
                     pred_xstart_u = (x_update - model_output_u * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
                     if clip_denoised:
                         pred_xstart_u = pred_xstart_u.clamp(-1, 1)
+                    latent_u = adapter_model(pred_xstart_u)
+                    if latent_u.shape[1] != Rr:
+                        raise ValueError(f"Adapter output channel {latent_u.shape[1]} must equal rank r ({Rr}).")
                     E_tune_u = factor_model()
-                    xhat_u = (pred_xstart_u + 1) / 2
+                    xhat_u = (latent_u + 1) / 2
+
                     xhat_u = th.matmul(E_tune_u, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
                     loss_update = self._condition_loss(param, model_condition, xhat_u)
                     if adapter_optim is not None:
@@ -235,7 +240,11 @@ class GaussianDiffusion:
 
             # update
             E_tune = factor_model()
-            xhat = (pred_xstart + 1) / 2
+            latent = adapter_model(pred_xstart)
+            if latent.shape[1] != Rr:
+                raise ValueError(f"Adapter output channel {latent.shape[1]} must equal rank r ({Rr}).")
+            xhat = (latent + 1) / 2
+
             xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
 
             # parameters

@@ -33,6 +33,7 @@ def parse_args_and_config():
     parser.add_argument('-eta2', '--eta2', type=float, default=2)
     parser.add_argument('--k', type=float, default=8)
     parser.add_argument('-step', '--step', type=int, default=20)
+    parser.add_argument('--rank', type=int, default=3)
     parser.add_argument('--posterior_update_steps', type=int, default=1)
     parser.add_argument('--adapter_lr', type=float, default=1e-4)
     parser.add_argument('--factor_lr', type=float, default=5e-3)
@@ -139,7 +140,7 @@ if __name__ == "__main__":
     data['input'] = torch.from_numpy(data['input']).permute(2, 0, 1).unsqueeze(0).float().to(device)
     data['gt'] = torch.from_numpy(data['gt']).permute(2, 0, 1).unsqueeze(0).float().to(device)
     Ch, ms = data['gt'].shape[1], data['gt'].shape[2]
-    Rr = 3  # spectral dimensironality of subspace
+    Rr = opt['rank']  # spectral dimensionality of subspace
     K = 1
     model_condition = {'input': data['input'], 'gt': data['gt'], 'sigma': data['sigma']}
     if param['task'] == 'inpainting':
@@ -165,22 +166,27 @@ if __name__ == "__main__":
         import matlab.engine
         eng = matlab.engine.start_matlab()
         eng.cd(r'matlab')
-        res = eng.sRRQR_rank(E[0].cpu().numpy().T, 1.2, 3, nargout=3)
-        param['Band'] = th.Tensor(np.sort(list(res[-1][0][:3]))).type(th.int).to(device)-1
+        res = eng.sRRQR_rank(E[0].cpu().numpy().T, 1.2, Rr, nargout=3)
+        param['Band'] = th.Tensor(np.sort(list(res[-1][0][:Rr]))).type(th.int).to(device)-1
 
     else:
         param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)
     print(param['Band'])
 
+    model_out_channels = int(opt['model']['out_channel'])
+    denoise_model = LightweightAdapter(
+        in_channels=model_out_channels,
+        out_channels=Rr * K,
+        hidden_channels=opt['adapter_hidden']
+    ).to(device)
     if opt['posterior_update_steps'] > 0:
-        denoise_model = LightweightAdapter(Rr * K, hidden_channels=opt['adapter_hidden']).to(device)
         denoise_optim = th.optim.Adam(denoise_model.parameters(), lr=opt['adapter_lr'])
     else:
-        denoise_model = None
         denoise_optim = None
     denoised_fn = {
         'denoise_model': denoise_model,
-        'denoise_optim': denoise_optim
+        'denoise_optim': denoise_optim,
+        'model_channels': model_out_channels,
     }
     param['posterior_update_steps'] = opt['posterior_update_steps']
     param['factor_lr'] = opt['factor_lr']
