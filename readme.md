@@ -31,20 +31,64 @@ downloading the data for denoise, super-resolution and inpainting from [Google D
 
 ### Testing
 
+> **New in this repo version**
+> - Added a **lightweight adapter** (`1x1 -> SiLU -> 1x1`) after the pretrained diffusion output.
+> - The adapter maps diffusion output channels (default 3) to a manual rank `r` (`--rank`).
+> - RRQR now also selects **`r` bands** (instead of fixed 3).
+> - Optional posterior inner-loop updates are controlled by `--posterior_update_steps`.
+
+#### Common arguments (new / updated)
+- `--rank`: reduced subspace rank `r` (default: `3`).
+- `--posterior_update_steps`: adapter/factor update steps per sampling step (default: `1`).
+- `--adapter_lr`: adapter learning rate (default: `1e-4`).
+- `--factor_lr`: additive matrix-factor finetune learning rate (default: `5e-3`).
+- `--adapter_hidden`: adapter bottleneck channels (default: `16`).
+
 Denoising on Houston dataset (sigma=50) 
 ```bash
-python main.py -eta1 16 -eta2 10 --k 8 -step 20 -dn Houston --task denoise --task_params 50 -gpu 0 --beta_schedule exp  
+python main.py -eta1 16 -eta2 10 --k 8 -step 20 -dn Houston --task denoise --task_params 50 \
+  --rank 6 --posterior_update_steps 1 --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
+  -gpu 0 --beta_schedule exp
 ```
 
 Super-Resolution on WDC dataset (upscale factor=x4) 
 ```bash
-python main.py -eta1 500 -eta2 12 --k 8 -step 20 -dn WDC --task sr --task_params 0.25 -gpu 0 --beta_schedule exp 
+python main.py -eta1 500 -eta2 12 --k 8 -step 20 -dn WDC --task sr --task_params 0.25 \
+  --rank 6 --posterior_update_steps 1 --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
+  -gpu 0 --beta_schedule exp
 ```
 
 Inpainting on Salinas dataset (masking rate=0.8) 
 ```bash
-python main.py -eta1 8 -eta2 6 --k 5 -step 20 -dn Salinas --task inpainting --task_params 0.8 -gpu 0 --beta_schedule exp 
+python main.py -eta1 8 -eta2 6 --k 5 -step 20 -dn Salinas --task inpainting --task_params 0.8 \
+  --rank 6 --posterior_update_steps 1 --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
+  -gpu 0 --beta_schedule exp
 ```
+
+Disable posterior updates (adapter/factor only forward, no optimization):
+```bash
+python main.py -eta1 16 -eta2 10 --k 8 -step 20 -dn Houston --task denoise --task_params 50 \
+  --rank 6 --posterior_update_steps 0 -gpu 0 --beta_schedule exp
+```
+
+### Data format and `.mat` key naming
+Each test `.mat` file should contain:
+
+- `input`: degraded HSI, shape `[H, W, C]`, float.
+- `gt`: ground-truth HSI, shape `[H, W, C]`, float.
+- `sigma`: noise level metadata (used by pipeline configuration).
+
+Task-specific keys:
+
+- **Super-resolution (`--task sr`)**
+  - `scale`: scalar downsample factor (e.g. `0.25` for x4 SR in this repo setting).
+- **Inpainting (`--task inpainting`)**
+  - `mask`: spatial/spectral mask with shape `[H, W, C]` (0/1).
+
+Notes:
+- The loader converts `input`/`gt` to PyTorch tensors via `permute(2, 0, 1)` and adds batch dimension.
+- Dataset paths are auto-generated from `--dataname`, `--task`, and `--task_params` in `main.py`.
+- If RRQR is enabled (default), selected band count equals `--rank`.
 
 ### The effectiveness of RRQR
 To disable RRQR, adding '--no_rrqr' and the bands are selected at equal intervals
