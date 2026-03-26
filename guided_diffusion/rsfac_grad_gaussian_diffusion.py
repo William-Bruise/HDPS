@@ -280,9 +280,10 @@ class GaussianDiffusion:
         # plt.legend()
         # plt.show()
 
-        plt.plot(psnr_list)
-        plt.ylabel('PSNR')
-        plt.show()
+        if bool(param.get('plot_psnr_curve', False)):
+            plt.plot(psnr_list)
+            plt.ylabel('PSNR')
+            plt.show()
 
         # plt.plot(norm_list)
         # plt.ylabel('guidance function loss')

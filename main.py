@@ -126,6 +126,8 @@ def parse_args_and_config():
     parser.add_argument('--beta_linear_end', type=float, default=1e-2)
     parser.add_argument('--cosine_s', type=float, default=0)
     parser.add_argument('--no_rrqr', default=False, action='store_true')
+    parser.add_argument('--plot_psnr_curve', default=False, action='store_true',
+                        help='Plot PSNR-vs-iteration curve after sampling.')
 
     parser.add_argument('-gpu', '--gpu_ids', type=str, default="1")
     parser.add_argument('-seed', '--seed', type=int, default=0)
@@ -183,6 +185,7 @@ if __name__ == "__main__":
     param['task'] = opt['task']
     param['eta1'] = opt['eta1']
     param['eta2'] = opt['eta2']
+    param['plot_psnr_curve'] = bool(opt.get('plot_psnr_curve', False))
 
 
     opt['dataroot'] = resolve_input_path(opt)
