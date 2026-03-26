@@ -218,3 +218,4 @@ if __name__ == "__main__":
 
         print('best psnr: %.2f, best ssim: %.2f,' %
               (MSIQA(im_out, data['gt'])[0], MSIQA(im_out, data['gt'])[1]))
+
