@@ -4,12 +4,14 @@ set -euo pipefail
 # Grid search for denoise task.
 # Data reading related args are intentionally kept unchanged.
 
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 dataroot="data"
 data_file="car.mat"
 dataname="Houston"
 task="denoise"
 task_params="50"
-gpu="0"
+gpu="2"
 beta_schedule="exp"
 
 eta1_grid=(8 16 24)
@@ -42,13 +44,27 @@ for eta1 in "${eta1_grid[@]}"; do
 
                   echo "[GRID][denoise][run ${run_id}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}"
 
-                  python main.py \
+                  if python main.py \
                     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
                     -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
                     --dataroot "${dataroot}" --data_file "${data_file}" \
                     --rank "${rank}" --posterior_update_steps "${posterior_steps}" \
                     --adapter_lr "${adapter_lr}" --factor_lr "${factor_lr}" --adapter_hidden "${adapter_hidden}" \
-                    -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee "${log_file}"
+                    -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee "${log_file}"; then
+                    run_status="ok"
+                  else
+                    run_status="failed"
+                  fi
+
+                  if [[ "${run_status}" == "failed" ]]; then
+                    if grep -qiE "outofmemoryerror|cuda out of memory" "${log_file}"; then
+                      echo "[GRID][denoise][run ${run_id}] OOM detected, skip this config and continue."
+                      sleep 2
+                      continue
+                    fi
+                    echo "[GRID][denoise][run ${run_id}] failed (non-OOM), stop search."
+                    exit 1
+                  fi
 
                   run_psnr=$(python - "${log_file}" <<'PY'
 import re, sys
@@ -60,7 +76,7 @@ PY
 
                   if [[ "${run_psnr}" != "nan" ]]; then
                     better=$(python - "${run_psnr}" "${best_psnr}" <<'PY'
-import math, sys
+import sys
 cur = float(sys.argv[1])
 best = float('-inf') if sys.argv[2] == '-inf' else float(sys.argv[2])
 print('1' if cur > best else '0')
@@ -73,6 +89,7 @@ PY
                   fi
 
                   echo "[GRID][denoise][run ${run_id}] psnr=${run_psnr} | best_psnr=${best_psnr}"
+                  sleep 1
                 done
               done
             done
