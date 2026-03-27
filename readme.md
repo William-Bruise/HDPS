@@ -23,6 +23,18 @@ checkpoints/diffusion/I190000_E97_gen.pth
 
 ### 参数说明（核心）
 
+### RRQR 后端说明（重要）
+
+当前版本 **不再依赖 `matlab.engine`**。`main.py` 默认使用仓库内的纯 Python 实现 `utility/srrqr.py` 完成 RRQR 选带。
+
+如果你仍然看到报错：`ModuleNotFoundError: No module named 'matlab.engine'`，通常说明你运行的不是当前仓库这份 `main.py`（例如还在跑旧目录 `/home/wuweihao/HDPS/main.py`）。
+
+可先自检：
+```bash
+python -c "import pathlib; p=pathlib.Path('main.py'); print(p.resolve()); print('matlab.engine' in p.read_text())"
+```
+如果输出是 `True`，说明文件还是旧版，请同步最新代码后再运行。
+
 > 以上三个 `.sh` 脚本已内置这些参数；也可以在命令后追加额外参数覆盖，例如 `./denoise.sh --step 10`。
 - `--rank`：子空间维度 `r`（适配器输出通道数，RRQR选带数）。
 - `--posterior_update_steps`：每个采样步的后验内循环更新次数。
