@@ -1,10 +1,214 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python main.py \
-  -eta1 500 -eta2 12 --k 8 -step 20 \
-  -dn WDC --task sr --task_params 0.25 \
-  --dataroot data --data_file animal_garden.mat \
-  --rank 6 --posterior_update_steps 1 \
-  --adapter_lr 1e-4 --factor_lr 5e-3 --adapter_hidden 16 \
-  -gpu 0 --beta_schedule exp "$@"
+# Search modes:
+#   SEARCH_MODE=grid   -> full Cartesian grid (default)
+#   SEARCH_MODE=hybrid -> random coarse search + top-k neighborhood fine grid
+
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+SEARCH_MODE="${SEARCH_MODE:-grid}"
+COARSE_RANDOM_N="${COARSE_RANDOM_N:-80}"
+TOP_K="${TOP_K:-5}"
+RANDOM_SEED="${RANDOM_SEED:-42}"
+
+dataroot="data"
+data_file="animal_garden.mat"
+dataname="WDC"
+task="sr"
+task_params="0.25"
+gpu="2"
+beta_schedule="exp"
+
+eta1_grid=(100 200 300 500 700 1000)
+eta2_grid=(2 4 8 12 16)
+k_grid=(4 6 8 10 12)
+step_grid=(10 20 30 40)
+rank_grid=(2 4 6 8 10)
+posterior_steps_grid=(0 1 2 3)
+adapter_lr_grid=(5e-4 2e-4 1e-4 5e-5 1e-5)
+factor_lr_grid=(1e-2 5e-3 1e-3 5e-4 1e-4)
+adapter_hidden_grid=(8 16 32)
+
+extra_args=("$@")
+best_psnr="-inf"
+best_cfg=""
+run_id=0
+log_file="grid_sr.log"
+result_file="grid_sr_results.tsv"
+: > "${log_file}"
+: > "${result_file}"
+declare -A seen_configs
+
+run_config() {
+  local eta1="$1" eta2="$2" k="$3" step="$4" rank="$5" posterior_steps="$6" adapter_lr="$7" factor_lr="$8" adapter_hidden="$9"
+  local key="${eta1}|${eta2}|${k}|${step}|${rank}|${posterior_steps}|${adapter_lr}|${factor_lr}|${adapter_hidden}"
+  if [[ -n "${seen_configs[$key]:-}" ]]; then
+    return 0
+  fi
+  seen_configs[$key]=1
+
+  run_id=$((run_id + 1))
+  local run_log=".grid_run_${run_id}.log"
+
+  echo "[GRID][sr][run ${run_id}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}"
+
+  if python main.py \
+    -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
+    -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
+    --dataroot "${dataroot}" --data_file "${data_file}" \
+    --rank "${rank}" --posterior_update_steps "${posterior_steps}" \
+    --adapter_lr "${adapter_lr}" --factor_lr "${factor_lr}" --adapter_hidden "${adapter_hidden}" \
+    -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee -a "${log_file}" "${run_log}"; then
+    run_status="ok"
+  else
+    run_status="failed"
+  fi
+
+  if [[ "${run_status}" == "failed" ]]; then
+    if grep -qiE "outofmemoryerror|cuda out of memory" "${run_log}"; then
+      echo "[GRID][sr][run ${run_id}] OOM detected, skip this config and continue."
+      rm -f "${run_log}"
+      sleep 2
+      return 0
+    fi
+    echo "[GRID][sr][run ${run_id}] failed (non-OOM), stop search."
+    rm -f "${run_log}"
+    exit 1
+  fi
+
+  run_psnr=$(python - "${run_log}" <<'PY'
+import re, sys
+text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read()
+vals = re.findall(r'best psnr:\s*([0-9]+(?:\.[0-9]+)?)', text)
+print(vals[-1] if vals else "nan")
+PY
+)
+
+  if [[ "${run_psnr}" != "nan" ]]; then
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${run_psnr}" "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}" "${adapter_lr}" "${factor_lr}" "${adapter_hidden}" >> "${result_file}"
+
+    better=$(python - "${run_psnr}" "${best_psnr}" <<'PY'
+import sys
+cur = float(sys.argv[1])
+best = float('-inf') if sys.argv[2] == '-inf' else float(sys.argv[2])
+print('1' if cur > best else '0')
+PY
+)
+    if [[ "${better}" == "1" ]]; then
+      best_psnr="${run_psnr}"
+      best_cfg="eta1=${eta1}, eta2=${eta2}, k=${k}, step=${step}, rank=${rank}, posterior_update_steps=${posterior_steps}, adapter_lr=${adapter_lr}, factor_lr=${factor_lr}, adapter_hidden=${adapter_hidden}"
+    fi
+  fi
+
+  echo "[GRID][sr][run ${run_id}] psnr=${run_psnr} | best_psnr=${best_psnr}"
+  rm -f "${run_log}"
+  sleep 1
+}
+
+run_full_grid() {
+  for eta1 in "${eta1_grid[@]}"; do
+    for eta2 in "${eta2_grid[@]}"; do
+      for k in "${k_grid[@]}"; do
+        for step in "${step_grid[@]}"; do
+          for rank in "${rank_grid[@]}"; do
+            for posterior_steps in "${posterior_steps_grid[@]}"; do
+              for adapter_lr in "${adapter_lr_grid[@]}"; do
+                for factor_lr in "${factor_lr_grid[@]}"; do
+                  for adapter_hidden in "${adapter_hidden_grid[@]}"; do
+                    run_config "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}" "${adapter_lr}" "${factor_lr}" "${adapter_hidden}"
+                  done
+                done
+              done
+            done
+          done
+        done
+      done
+    done
+  done
+}
+
+run_hybrid_search() {
+  mapfile -t coarse_cfgs < <(python - <<PY
+import itertools, random
+seed=${RANDOM_SEED}
+random_n=${COARSE_RANDOM_N}
+eta1=${eta1_grid[@]@Q}.split()
+eta2=${eta2_grid[@]@Q}.split()
+k=${k_grid[@]@Q}.split()
+step=${step_grid[@]@Q}.split()
+rank=${rank_grid[@]@Q}.split()
+post=${posterior_steps_grid[@]@Q}.split()
+alr=${adapter_lr_grid[@]@Q}.split()
+flr=${factor_lr_grid[@]@Q}.split()
+ah=${adapter_hidden_grid[@]@Q}.split()
+all_cfg=list(itertools.product(eta1,eta2,k,step,rank,post,alr,flr,ah))
+random.seed(seed)
+random.shuffle(all_cfg)
+for c in all_cfg[:min(random_n,len(all_cfg))]:
+    print('\t'.join(c))
+PY
+)
+
+  for line in "${coarse_cfgs[@]}"; do
+    IFS=$'\t' read -r a b c d e f g h i <<<"${line}"
+    run_config "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$i"
+  done
+
+  if [[ ! -s "${result_file}" ]]; then
+    return
+  fi
+
+  local top_file=".grid_top.tsv"
+  sort -t $'\t' -k1,1nr "${result_file}" | head -n "${TOP_K}" > "${top_file}"
+
+  mapfile -t fine_cfgs < <(python - <<PY
+import itertools
+from pathlib import Path
+
+def parse_arr(s): return s.split()
+eta1=parse_arr(${eta1_grid[@]@Q})
+eta2=parse_arr(${eta2_grid[@]@Q})
+k=parse_arr(${k_grid[@]@Q})
+step=parse_arr(${step_grid[@]@Q})
+rank=parse_arr(${rank_grid[@]@Q})
+post=parse_arr(${posterior_steps_grid[@]@Q})
+alr=parse_arr(${adapter_lr_grid[@]@Q})
+flr=parse_arr(${factor_lr_grid[@]@Q})
+ah=parse_arr(${adapter_hidden_grid[@]@Q})
+arrs=[eta1,eta2,k,step,rank,post,alr,flr,ah]
+selected=[set() for _ in arrs]
+for line in Path('.grid_top.tsv').read_text().splitlines():
+    parts=line.split('\t')[1:]
+    for i,val in enumerate(parts):
+        arr=arrs[i]
+        idx=arr.index(val)
+        for j in [idx-1,idx,idx+1]:
+            if 0<=j<len(arr):
+                selected[i].add(arr[j])
+final=[sorted(s,key=lambda x: arrs[i].index(x)) if s else arrs[i] for i,s in enumerate(selected)]
+for c in itertools.product(*final):
+    print('\t'.join(c))
+PY
+)
+
+  rm -f "${top_file}"
+
+  for line in "${fine_cfgs[@]}"; do
+    IFS=$'\t' read -r a b c d e f g h i <<<"${line}"
+    run_config "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$i"
+  done
+}
+
+if [[ "${SEARCH_MODE}" == "hybrid" ]]; then
+  echo "[GRID][sr] mode=hybrid, coarse_random_n=${COARSE_RANDOM_N}, top_k=${TOP_K}, seed=${RANDOM_SEED}"
+  run_hybrid_search
+else
+  echo "[GRID][sr] mode=grid"
+  run_full_grid
+fi
+
+echo "[GRID][sr] search done"
+echo "[GRID][sr] best_psnr=${best_psnr}"
+echo "[GRID][sr] best_cfg=${best_cfg}"
