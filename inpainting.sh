@@ -134,15 +134,15 @@ run_hybrid_search() {
 import itertools, random
 seed=${RANDOM_SEED}
 random_n=${COARSE_RANDOM_N}
-eta1=${eta1_grid[@]@Q}.split()
-eta2=${eta2_grid[@]@Q}.split()
-k=${k_grid[@]@Q}.split()
-step=${step_grid[@]@Q}.split()
-rank=${rank_grid[@]@Q}.split()
-post=${posterior_steps_grid[@]@Q}.split()
-alr=${adapter_lr_grid[@]@Q}.split()
-flr=${factor_lr_grid[@]@Q}.split()
-ah=${adapter_hidden_grid[@]@Q}.split()
+eta1="${eta1_grid[*]}".split()
+eta2="${eta2_grid[*]}".split()
+k="${k_grid[*]}".split()
+step="${step_grid[*]}".split()
+rank="${rank_grid[*]}".split()
+post="${posterior_steps_grid[*]}".split()
+alr="${adapter_lr_grid[*]}".split()
+flr="${factor_lr_grid[*]}".split()
+ah="${adapter_hidden_grid[*]}".split()
 all_cfg=list(itertools.product(eta1,eta2,k,step,rank,post,alr,flr,ah))
 random.seed(seed)
 random.shuffle(all_cfg)
@@ -168,15 +168,15 @@ import itertools
 from pathlib import Path
 
 def parse_arr(s): return s.split()
-eta1=parse_arr(${eta1_grid[@]@Q})
-eta2=parse_arr(${eta2_grid[@]@Q})
-k=parse_arr(${k_grid[@]@Q})
-step=parse_arr(${step_grid[@]@Q})
-rank=parse_arr(${rank_grid[@]@Q})
-post=parse_arr(${posterior_steps_grid[@]@Q})
-alr=parse_arr(${adapter_lr_grid[@]@Q})
-flr=parse_arr(${factor_lr_grid[@]@Q})
-ah=parse_arr(${adapter_hidden_grid[@]@Q})
+eta1=parse_arr("${eta1_grid[*]}")
+eta2=parse_arr("${eta2_grid[*]}")
+k=parse_arr("${k_grid[*]}")
+step=parse_arr("${step_grid[*]}")
+rank=parse_arr("${rank_grid[*]}")
+post=parse_arr("${posterior_steps_grid[*]}")
+alr=parse_arr("${adapter_lr_grid[*]}")
+flr=parse_arr("${factor_lr_grid[*]}")
+ah=parse_arr("${adapter_hidden_grid[*]}")
 arrs=[eta1,eta2,k,step,rank,post,alr,flr,ah]
 selected=[set() for _ in arrs]
 for line in Path('.grid_top.tsv').read_text().splitlines():
