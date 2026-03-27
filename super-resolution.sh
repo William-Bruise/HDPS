@@ -29,6 +29,8 @@ extra_args=("$@")
 best_psnr="-inf"
 best_cfg=""
 run_id=0
+log_file="grid_sr.log"
+: > "${log_file}"
 
 for eta1 in "${eta1_grid[@]}"; do
   for eta2 in "${eta2_grid[@]}"; do
@@ -40,7 +42,7 @@ for eta1 in "${eta1_grid[@]}"; do
               for factor_lr in "${factor_lr_grid[@]}"; do
                 for adapter_hidden in "${adapter_hidden_grid[@]}"; do
                   run_id=$((run_id + 1))
-                  log_file="grid_sr_run_${run_id}.log"
+                  run_log=".grid_run_${run_id}.log"
 
                   echo "[GRID][sr][run ${run_id}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}"
 
@@ -50,23 +52,25 @@ for eta1 in "${eta1_grid[@]}"; do
                     --dataroot "${dataroot}" --data_file "${data_file}" \
                     --rank "${rank}" --posterior_update_steps "${posterior_steps}" \
                     --adapter_lr "${adapter_lr}" --factor_lr "${factor_lr}" --adapter_hidden "${adapter_hidden}" \
-                    -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee "${log_file}"; then
+                    -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee -a "${log_file}" "${run_log}"; then
                     run_status="ok"
                   else
                     run_status="failed"
                   fi
 
                   if [[ "${run_status}" == "failed" ]]; then
-                    if grep -qiE "outofmemoryerror|cuda out of memory" "${log_file}"; then
+                    if grep -qiE "outofmemoryerror|cuda out of memory" "${run_log}"; then
                       echo "[GRID][sr][run ${run_id}] OOM detected, skip this config and continue."
+                      rm -f "${run_log}"
                       sleep 2
                       continue
                     fi
                     echo "[GRID][sr][run ${run_id}] failed (non-OOM), stop search."
+                    rm -f "${run_log}"
                     exit 1
                   fi
 
-                  run_psnr=$(python - "${log_file}" <<'PY'
+                  run_psnr=$(python - "${run_log}" <<'PY'
 import re, sys
 text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read()
 vals = re.findall(r'best psnr:\s*([0-9]+(?:\.[0-9]+)?)', text)
@@ -89,6 +93,7 @@ PY
                   fi
 
                   echo "[GRID][sr][run ${run_id}] psnr=${run_psnr} | best_psnr=${best_psnr}"
+                  rm -f "${run_log}"
                   sleep 1
                 done
               done
