@@ -14,15 +14,15 @@ task_params="0.8"
 gpu="2"
 beta_schedule="exp"
 
-eta1_grid=(6 8 10)
-eta2_grid=(4 6)
-k_grid=(4 5 6)
-step_grid=(20 30)
-rank_grid=(4 6)
-posterior_steps_grid=(1 2)
-adapter_lr_grid=(1e-4 5e-5)
-factor_lr_grid=(5e-3 1e-3)
-adapter_hidden_grid=(16)
+eta1_grid=(2 4 6 8 10 12)
+eta2_grid=(1 2 4 6 8)
+k_grid=(2 4 6 8 10)
+step_grid=(10 20 30 40)
+rank_grid=(2 4 6 8 10)
+posterior_steps_grid=(0 1 2 3)
+adapter_lr_grid=(5e-4 2e-4 1e-4 5e-5 1e-5)
+factor_lr_grid=(1e-2 5e-3 1e-3 5e-4 1e-4)
+adapter_hidden_grid=(8 16 32)
 
 extra_args=("$@")
 
