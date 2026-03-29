@@ -3,13 +3,13 @@ set -euo pipefail
 
 # Search modes:
 #   SEARCH_MODE=grid   -> full Cartesian grid
-#   SEARCH_MODE=hybrid -> random coarse search + top-k neighborhood fine grid (default)
+#   SEARCH_MODE=hybrid -> coarse grid first, then fine grid around coarse best (default)
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 SEARCH_MODE="${SEARCH_MODE:-hybrid}"
 COARSE_RANDOM_N="${COARSE_RANDOM_N:-120}"
-TOP_K="${TOP_K:-8}"
+TOP_K="${TOP_K:-3}"
 RANDOM_SEED="${RANDOM_SEED:-42}"
 
 dataroot="data"
@@ -131,22 +131,24 @@ run_full_grid() {
 
 run_hybrid_search() {
   mapfile -t coarse_cfgs < <(python - <<PY
-import itertools, random
-seed=${RANDOM_SEED}
-random_n=${COARSE_RANDOM_N}
-eta1="${eta1_grid[*]}".split()
-eta2="${eta2_grid[*]}".split()
-k="${k_grid[*]}".split()
-step="${step_grid[*]}".split()
-rank="${rank_grid[*]}".split()
-post="${posterior_steps_grid[*]}".split()
-alr="${adapter_lr_grid[*]}".split()
-flr="${factor_lr_grid[*]}".split()
-ah="${adapter_hidden_grid[*]}".split()
-all_cfg=list(itertools.product(eta1,eta2,k,step,rank,post,alr,flr,ah))
-random.seed(seed)
-random.shuffle(all_cfg)
-for c in all_cfg[:min(random_n,len(all_cfg))]:
+import itertools
+
+def coarse(arr):
+    if len(arr) <= 3:
+        return arr
+    idxs = sorted(set([0, len(arr)//2, len(arr)-1]))
+    return [arr[i] for i in idxs]
+
+eta1=coarse("${eta1_grid[*]}".split())
+eta2=coarse("${eta2_grid[*]}".split())
+k=coarse("${k_grid[*]}".split())
+step=coarse("${step_grid[*]}".split())
+rank=coarse("${rank_grid[*]}".split())
+post=coarse("${posterior_steps_grid[*]}".split())
+alr=coarse("${adapter_lr_grid[*]}".split())
+flr=coarse("${factor_lr_grid[*]}".split())
+ah=coarse("${adapter_hidden_grid[*]}".split())
+for c in itertools.product(eta1,eta2,k,step,rank,post,alr,flr,ah):
     print('\t'.join(c))
 PY
 )
@@ -202,7 +204,7 @@ PY
 }
 
 if [[ "${SEARCH_MODE}" == "hybrid" ]]; then
-  echo "[GRID][inpainting] mode=hybrid, coarse_random_n=${COARSE_RANDOM_N}, top_k=${TOP_K}, seed=${RANDOM_SEED}"
+  echo "[GRID][inpainting] mode=hybrid(coarse2fine)"
   run_hybrid_search
 else
   echo "[GRID][inpainting] mode=grid"
