@@ -183,11 +183,11 @@ class GaussianDiffusion:
 
         adapter_model = denoised_fn.get('denoise_model', None) if denoised_fn is not None else None
         adapter_optim = denoised_fn.get('denoise_optim', None) if denoised_fn is not None else None
-        if adapter_model is None:
-            raise ValueError("denoise_model(adapter) must be provided to map diffusion output channels to rank r.")
-        adapter_model.train()
-        factor_model = AdditiveMatrixFinetune(E_base).to(device)
-        factor_optim = th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
+        use_vanilla_hirdiff = bool(param.get('vanilla_hirdiff', False))
+        if adapter_model is not None:
+            adapter_model.train()
+        factor_model = None if use_vanilla_hirdiff else AdditiveMatrixFinetune(E_base).to(device)
+        factor_optim = None if use_vanilla_hirdiff else th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
 
         self.best_result, self.best_psnr = None, 0
         norm_list, psnr_list, result_list = [], [], []
@@ -206,7 +206,7 @@ class GaussianDiffusion:
                 x.device)
 
             with th.enable_grad():
-                inner_steps = max(0, int(param.get('posterior_update_steps', 0)))
+                inner_steps = 0 if use_vanilla_hirdiff else max(0, int(param.get('posterior_update_steps', 0)))
                 for _ in range(inner_steps):
                     x_update = img.detach()
                     model_output_u = model(x_update, alphas_bar)
@@ -214,28 +214,30 @@ class GaussianDiffusion:
                     if clip_denoised:
                         pred_xstart_u = pred_xstart_u.clamp(-1, 1)
                     latent_u = self._project_to_rank(adapter_model, pred_xstart_u, Rr)
-                    E_tune_u = factor_model()
+                    E_tune_u = E_base if use_vanilla_hirdiff else factor_model()
                     xhat_u = (latent_u + 1) / 2
                     xhat_u = th.matmul(E_tune_u, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
                     loss_update = self._condition_loss(param, model_condition, xhat_u)
                     if adapter_optim is not None:
                         adapter_optim.zero_grad()
-                    factor_optim.zero_grad()
+                    if factor_optim is not None:
+                        factor_optim.zero_grad()
                     loss_update.backward()
                     if adapter_optim is not None:
                         adapter_optim.step()
-                    factor_optim.step()
+                    if factor_optim is not None:
+                        factor_optim.step()
 
             # DDIM: Algorithm 1 in the paper
             model_output = model(x, alphas_bar)
-            if adapter_model is not None:
-                model_output = model_output + adapter_model(x)
+            # NOTE: adapter_model is dedicated to spectral-rank projection via
+            # _project_to_rank(...), so we do not add it as a diffusion residual.
             pred_xstart = (x - model_output * (1 - alphas_bar).sqrt()) / alphas_bar.sqrt()
             if clip_denoised:
                 pred_xstart = pred_xstart.clamp(-1, 1)
 
             # update
-            E_tune = factor_model()
+            E_tune = E_base if use_vanilla_hirdiff else factor_model()
             latent = self._project_to_rank(adapter_model, pred_xstart, Rr)
             xhat = (latent + 1) / 2
             xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
@@ -279,9 +281,10 @@ class GaussianDiffusion:
         # plt.legend()
         # plt.show()
 
-        plt.plot(psnr_list)
-        plt.ylabel('PSNR')
-        plt.show()
+        if bool(param.get('plot_psnr_curve', False)):
+            plt.plot(psnr_list)
+            plt.ylabel('PSNR')
+            plt.show()
 
         # plt.plot(norm_list)
         # plt.ylabel('guidance function loss')
@@ -297,7 +300,12 @@ class GaussianDiffusion:
         raise ValueError('invalid task name')
 
     def _project_to_rank(self, adapter_model, pred_xstart, rank):
-        latent = adapter_model(pred_xstart)
+        if adapter_model is None:
+            if pred_xstart.shape[1] != rank:
+                raise ValueError(f"Vanilla HIR-Diff expects model output channels={pred_xstart.shape[1]} to equal rank r ({rank}).")
+            latent = pred_xstart
+        else:
+            latent = adapter_model(pred_xstart)
         if latent.shape[1] != rank:
             raise ValueError(f"Adapter output channel {latent.shape[1]} must equal rank r ({rank}).")
         return latent

@@ -19,6 +19,7 @@ from guided_diffusion.core import imresize, blur_kernel
 from math import sqrt, log
 import warnings
 import matplotlib
+from utility.srrqr import srrqr_rank
 
 def resolve_input_path(opt):
     input_path = Path(opt['dataroot'])
@@ -125,6 +126,10 @@ def parse_args_and_config():
     parser.add_argument('--beta_linear_end', type=float, default=1e-2)
     parser.add_argument('--cosine_s', type=float, default=0)
     parser.add_argument('--no_rrqr', default=False, action='store_true')
+    parser.add_argument('--plot_psnr_curve', default=False, action='store_true',
+                        help='Plot PSNR-vs-iteration curve after sampling.')
+    parser.add_argument('--vanilla_hirdiff', default=False, action='store_true',
+                        help='Disable adapter and additive spectral matrix finetune (baseline HIR-Diff).')
 
     parser.add_argument('-gpu', '--gpu_ids', type=str, default="1")
     parser.add_argument('-seed', '--seed', type=int, default=0)
@@ -182,6 +187,7 @@ if __name__ == "__main__":
     param['task'] = opt['task']
     param['eta1'] = opt['eta1']
     param['eta2'] = opt['eta2']
+    param['plot_psnr_curve'] = bool(opt.get('plot_psnr_curve', False))
 
 
     opt['dataroot'] = resolve_input_path(opt)
@@ -191,8 +197,9 @@ if __name__ == "__main__":
     if 'gt' not in data:
         raise KeyError(f"Missing 'gt' in {opt['dataroot']}.")
     data['gt'] = torch.from_numpy(data['gt']).permute(2, 0, 1).unsqueeze(0).float().to(device)
-    Ch, ms = data['gt'].shape[1], data['gt'].shape[2]
-    Rr = opt['rank']  # spectral dimensionality of subspace
+    Ch, Hh, Ww = data['gt'].shape[1], data['gt'].shape[2], data['gt'].shape[3]
+    model_out_channels = int(opt['model']['out_channel'])
+    Rr = model_out_channels if opt['vanilla_hirdiff'] else opt['rank']  # spectral dimensionality of subspace
     K = 1
     data['input'], model_condition = build_observation_from_gt(opt, data['gt'], param['task'], Ch)
 
@@ -201,23 +208,24 @@ if __name__ == "__main__":
     E = v[..., :, :Rr*K]
 
     if not opt['no_rrqr']:
-        import matlab.engine
-        eng = matlab.engine.start_matlab()
-        eng.cd(r'matlab')
-        res = eng.sRRQR_rank(E[0].cpu().numpy().T, 1.2, Rr, nargout=3)
-        param['Band'] = th.Tensor(np.sort(list(res[-1][0][:Rr]))).type(th.int).to(device)-1
+        print('[INFO] RRQR backend: pure-python (utility.srrqr)')
+        _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
+        param['Band'] = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
 
     else:
         param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)
     print(param['Band'])
 
-    model_out_channels = int(opt['model']['out_channel'])
-    denoise_model = LightweightAdapter(
-        in_channels=model_out_channels,
-        out_channels=Rr * K,
-        hidden_channels=opt['adapter_hidden']
-    ).to(device)
-    if opt['posterior_update_steps'] > 0:
+    if not opt['vanilla_hirdiff']:
+        denoise_model = LightweightAdapter(
+            in_channels=model_out_channels,
+            out_channels=Rr * K,
+            hidden_channels=opt['adapter_hidden']
+        ).to(device)
+    else:
+        denoise_model = None
+
+    if opt['posterior_update_steps'] > 0 and denoise_model is not None:
         denoise_optim = th.optim.Adam(denoise_model.parameters(), lr=opt['adapter_lr'])
     else:
         denoise_optim = None
@@ -228,12 +236,13 @@ if __name__ == "__main__":
     }
     param['posterior_update_steps'] = opt['posterior_update_steps']
     param['factor_lr'] = opt['factor_lr']
+    param['vanilla_hirdiff'] = bool(opt.get('vanilla_hirdiff', False))
     step = opt['step']
     dname = opt['dataname']
     for j in range(opt['samplenum']):
         sample, E = diffusion.p_sample_loop(
             model,
-            (1, Ch, ms, ms),
+            (1, Ch, Hh, Ww),
             Rr=Rr,
             step=step,
             clip_denoised=True,
@@ -245,7 +254,10 @@ if __name__ == "__main__":
         )
         K = int(len(param['Band']) / Rr)
         sample = (sample + 1) / 2
-        im_out = th.matmul(E, sample.reshape(opt['batch_size'], Rr*K, -1)).reshape(opt['batch_size'], Ch, ms, ms)
+        if sample.shape[1] != Rr * K and denoise_model is not None:
+            sample = denoise_model(sample)
+        bsz = sample.shape[0]
+        im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
         im_out = th.clip(im_out, 0, 1)
         time_end = time.time()
         time_cost = time_end - time_start
