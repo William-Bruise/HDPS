@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # Search modes:
-#   SEARCH_MODE=grid   -> full Cartesian grid (default)
-#   SEARCH_MODE=hybrid -> random coarse search + top-k neighborhood fine grid
+#   SEARCH_MODE=grid   -> full Cartesian grid
+#   SEARCH_MODE=hybrid -> random coarse search + top-k neighborhood fine grid (default)
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-SEARCH_MODE="${SEARCH_MODE:-grid}"
-COARSE_RANDOM_N="${COARSE_RANDOM_N:-80}"
-TOP_K="${TOP_K:-5}"
+SEARCH_MODE="${SEARCH_MODE:-hybrid}"
+COARSE_RANDOM_N="${COARSE_RANDOM_N:-120}"
+TOP_K="${TOP_K:-8}"
 RANDOM_SEED="${RANDOM_SEED:-42}"
 
 dataroot="data"
@@ -20,15 +20,15 @@ task_params="0.8"
 gpu="2"
 beta_schedule="exp"
 
-eta1_grid=(2 4 6 8 10 12)
-eta2_grid=(1 2 4 6 8)
-k_grid=(4 6 8 10 12)
-step_grid=(10 20 30 40)
-rank_grid=(2 4 6 8 10)
-posterior_steps_grid=(0 1 2 3)
-adapter_lr_grid=(5e-4 2e-4 1e-4 5e-5 1e-5)
-factor_lr_grid=(1e-2 5e-3 1e-3 5e-4 1e-4)
-adapter_hidden_grid=(8 16 32)
+eta1_grid=(4 8 12)
+eta2_grid=(1 4 8)
+k_grid=(4 6 8)
+step_grid=(20 30)
+rank_grid=(4 6 8)
+posterior_steps_grid=(1 5 10 20 50 100)
+adapter_lr_grid=(1e-2 5e-3 1e-3 5e-4 1e-4)
+factor_lr_grid=(1e-2 5e-3 1e-3)
+adapter_hidden_grid=(32 64 128 256)
 
 extra_args=("$@")
 best_psnr="-inf"
