@@ -190,6 +190,7 @@ class GaussianDiffusion:
         factor_optim = None if use_vanilla_hirdiff else th.optim.Adam(factor_model.parameters(), lr=param.get('factor_lr', 5e-3))
 
         self.best_result, self.best_psnr = None, 0
+        adapter_residual_disabled_logged = False
         norm_list, psnr_list, result_list = [], [], []
         alphas_bar_list = []
         for iteration, (i, j) in pbar:
