@@ -235,7 +235,6 @@ if __name__ == "__main__":
         'model_channels': model_out_channels,
     }
     param['posterior_update_steps'] = opt['posterior_update_steps']
-    param['factor_lr'] = opt['factor_lr']
     param['vanilla_hirdiff'] = bool(opt.get('vanilla_hirdiff', False))
     step = opt['step']
     dname = opt['dataname']
