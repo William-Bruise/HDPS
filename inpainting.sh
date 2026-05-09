@@ -50,18 +50,7 @@ pick_random() {
 }
 
 is_oom_risk() {
-  local step="$1" rank="$2" posterior_steps="$3" hidden="$4"
-
-  # conservative heuristics: avoid known memory-heavy combinations
-  if (( step >= 24 && rank >= 6 && hidden >= 64 )); then
-    return 0
-  fi
-  if (( posterior_steps >= 10 && hidden >= 64 )); then
-    return 0
-  fi
-  if (( step >= 24 && posterior_steps >= 10 )); then
-    return 0
-  fi
+  # Pre-filter is intentionally disabled: always try sampled configs.
   return 1
 }
 
