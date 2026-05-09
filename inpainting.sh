@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fast and safer random search for inpainting hyperparameters.
-# Goals:
-#   1) smaller search space (faster)
-#   2) skip high-risk OOM configs
-#   3) continue on OOM instead of aborting
+# Full grid search for inpainting hyperparameters.
+# This script exhausts all combinations in the configured grids.
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-
-RANDOM_TRIALS="${RANDOM_TRIALS:-1}"
-RANDOM_SEED="${RANDOM_SEED:-42}"
 
 # data / task
 dataroot="data"
@@ -41,13 +35,6 @@ result_file="search_inpainting_results.tsv"
 : > "${log_file}"
 : > "${result_file}"
 declare -A seen_configs
-
-pick_random() {
-  local -n arr_ref="$1"
-  local n="${#arr_ref[@]}"
-  local idx=$((RANDOM % n))
-  echo "${arr_ref[$idx]}"
-}
 
 is_oom_risk() {
   # Pre-filter is intentionally disabled: always try sampled configs.
@@ -129,28 +116,25 @@ PY
   sleep 1
 }
 
-run_random_search() {
-  RANDOM="${RANDOM_SEED}"
-  local attempts=0
-  while (( run_id < RANDOM_TRIALS )); do
-    attempts=$((attempts + 1))
-    if (( attempts > RANDOM_TRIALS * 20 )); then
-      echo "[SEARCH][inpainting] reached max attempts while sampling unique/safe configs."
-      break
-    fi
-
-    eta1="$(pick_random eta1_grid)"
-    eta2="$(pick_random eta2_grid)"
-    k="$(pick_random k_grid)"
-    step="$(pick_random step_grid)"
-    rank="$(pick_random rank_grid)"
-    posterior_steps="$(pick_random posterior_steps_grid)"
-    run_config "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}"
+run_full_grid() {
+  for eta1 in "${eta1_grid[@]}"; do
+    for eta2 in "${eta2_grid[@]}"; do
+      for k in "${k_grid[@]}"; do
+        for step in "${step_grid[@]}"; do
+          for rank in "${rank_grid[@]}"; do
+            for posterior_steps in "${posterior_steps_grid[@]}"; do
+              run_config "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}"
+            done
+          done
+        done
+      done
+    done
   done
 }
 
-echo "[SEARCH][inpainting] mode=random trials=${RANDOM_TRIALS} seed=${RANDOM_SEED}"
-run_random_search
+total_combos=$(( ${#eta1_grid[@]} * ${#eta2_grid[@]} * ${#k_grid[@]} * ${#step_grid[@]} * ${#rank_grid[@]} * ${#posterior_steps_grid[@]} ))
+echo "[SEARCH][inpainting] mode=grid total_combos=${total_combos}"
+run_full_grid
 
 echo "[SEARCH][inpainting] search done"
 echo "[SEARCH][inpainting] best_psnr=${best_psnr}"
