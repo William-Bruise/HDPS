@@ -9,7 +9,7 @@ set -euo pipefail
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-RANDOM_TRIALS="${RANDOM_TRIALS:-16}"
+RANDOM_TRIALS="${RANDOM_TRIALS:-1}"
 RANDOM_SEED="${RANDOM_SEED:-42}"
 
 # data / task
