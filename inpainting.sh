@@ -30,6 +30,7 @@ extra_args=("$@")
 best_psnr="-inf"
 best_cfg=""
 run_id=0
+total_combos=0
 log_file="search_inpainting.log"
 result_file="search_inpainting_results.tsv"
 : > "${log_file}"
@@ -58,7 +59,7 @@ run_config() {
   run_id=$((run_id + 1))
   local run_log=".search_run_${run_id}.log"
 
-  echo "[SEARCH][inpainting][run ${run_id}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
 
   if python main.py \
     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
@@ -111,7 +112,7 @@ PY
     fi
   fi
 
-  echo "[SEARCH][inpainting][run ${run_id}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
   rm -f "${run_log}"
   sleep 1
 }
