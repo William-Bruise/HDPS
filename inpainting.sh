@@ -9,7 +9,7 @@ set -euo pipefail
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-RANDOM_TRIALS="${RANDOM_TRIALS:-24}"
+RANDOM_TRIALS="${RANDOM_TRIALS:-1}"
 RANDOM_SEED="${RANDOM_SEED:-42}"
 
 # data / task
@@ -21,16 +21,16 @@ task_params="0.8"
 gpu="2"
 beta_schedule="exp"
 
-# compact candidate sets (reduced from original huge grid)
+# compact candidate sets (further reduced)
 eta1_grid=(6 8 12)
 eta2_grid=(2 4 6)
 k_grid=(4 6)
 step_grid=(20 24)
 rank_grid=(4 6)
-posterior_steps_grid=(1 3 5 10)
-adapter_lr_grid=(1e-3 5e-4 1e-4)
-factor_lr_grid=(5e-3 1e-3)
-adapter_hidden_grid=(16 32 64)
+posterior_steps_grid=(20 40)
+adapter_lr="1e-3"
+factor_lr="5e-3"
+adapter_hidden="128"
 
 extra_args=("$@")
 best_psnr="-inf"
@@ -66,7 +66,7 @@ is_oom_risk() {
 }
 
 run_config() {
-  local eta1="$1" eta2="$2" k="$3" step="$4" rank="$5" posterior_steps="$6" adapter_lr="$7" factor_lr="$8" adapter_hidden="$9"
+  local eta1="$1" eta2="$2" k="$3" step="$4" rank="$5" posterior_steps="$6"
   local key="${eta1}|${eta2}|${k}|${step}|${rank}|${posterior_steps}|${adapter_lr}|${factor_lr}|${adapter_hidden}"
 
   if [[ -n "${seen_configs[$key]:-}" ]]; then
@@ -156,11 +156,7 @@ run_random_search() {
     step="$(pick_random step_grid)"
     rank="$(pick_random rank_grid)"
     posterior_steps="$(pick_random posterior_steps_grid)"
-    adapter_lr="$(pick_random adapter_lr_grid)"
-    factor_lr="$(pick_random factor_lr_grid)"
-    adapter_hidden="$(pick_random adapter_hidden_grid)"
-
-    run_config "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}" "${adapter_lr}" "${factor_lr}" "${adapter_hidden}"
+    run_config "${eta1}" "${eta2}" "${k}" "${step}" "${rank}" "${posterior_steps}"
   done
 }
 
