@@ -22,6 +22,22 @@ class LightweightAdapter(nn.Module):
             out = out + x
         return out
 
+
+class SpectralFactorAdapter(nn.Module):
+    """
+    Lightweight adapter that maps rank-latent features to full spectral channels.
+    """
+
+    def __init__(self, in_channels, out_channels, hidden_channels=16):
+        super().__init__()
+        hidden_channels = max(1, min(hidden_channels, in_channels, out_channels))
+        self.down = nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=True)
+        self.act = nn.SiLU()
+        self.up = nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        return self.up(self.act(self.down(x)))
+
 def create_model_and_diffusion_RS(opt):
     model = define_G(opt['model'])
     total_steps = opt['diffusion_setting']['diffusion_steps']
