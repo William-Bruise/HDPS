@@ -174,9 +174,13 @@ class GaussianDiffusion:
 
         adapter_model = denoised_fn.get('denoise_model', None) if denoised_fn is not None else None
         adapter_optim = denoised_fn.get('denoise_optim', None) if denoised_fn is not None else None
+        factor_adapter = denoised_fn.get('factor_adapter', None) if denoised_fn is not None else None
+        factor_optim = denoised_fn.get('factor_optim', None) if denoised_fn is not None else None
         use_vanilla_hirdiff = bool(param.get('vanilla_hirdiff', False))
         if adapter_model is not None:
             adapter_model.train()
+        if factor_adapter is not None:
+            factor_adapter.train()
 
         self.best_result, self.best_psnr = None, 0
         adapter_residual_disabled_logged = False
@@ -204,15 +208,21 @@ class GaussianDiffusion:
                     if clip_denoised:
                         pred_xstart_u = pred_xstart_u.clamp(-1, 1)
                     latent_u = self._project_to_rank(adapter_model, pred_xstart_u, Rr)
-                    E_tune_u = E_base
                     xhat_u = (latent_u + 1) / 2
-                    xhat_u = th.matmul(E_tune_u, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
+                    if factor_adapter is not None:
+                        xhat_u = factor_adapter(xhat_u)
+                    else:
+                        xhat_u = th.matmul(E_base, xhat_u.reshape(Bb, Rr, -1)).reshape(*shape)
                     loss_update = self._condition_loss(param, model_condition, xhat_u)
                     if adapter_optim is not None:
                         adapter_optim.zero_grad()
+                    if factor_optim is not None:
+                        factor_optim.zero_grad()
                     loss_update.backward()
                     if adapter_optim is not None:
                         adapter_optim.step()
+                    if factor_optim is not None:
+                        factor_optim.step()
 
             # DDIM: Algorithm 1 in the paper
             model_output = model(x, alphas_bar)
@@ -223,10 +233,14 @@ class GaussianDiffusion:
                 pred_xstart = pred_xstart.clamp(-1, 1)
 
             # update
-            E_tune = E_base
             latent = self._project_to_rank(adapter_model, pred_xstart, Rr)
             xhat = (latent + 1) / 2
-            xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
+            if factor_adapter is not None:
+                xhat = factor_adapter(xhat)
+                E_tune = E_base
+            else:
+                E_tune = E_base
+                xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)
 
             # parameters
             eta = 0
