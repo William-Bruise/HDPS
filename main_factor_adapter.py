@@ -113,6 +113,8 @@ def parse_args_and_config():
     parser.add_argument('--factor_lr', type=float, default=5e-3)
     parser.add_argument('--adapter_hidden', type=int, default=16)
     parser.add_argument('--factor_adapter_hidden', type=int, default=16)
+    parser.add_argument('--factor_init', type=str, default='rrqr', choices=['rrqr', 'svd'],
+                        help='Initialization for factor adapter base projection.')
 
     # datasets
     parser.add_argument('-dn', '--dataname', type=str, default='WDC',
@@ -208,7 +210,7 @@ if __name__ == "__main__":
     u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))
     E = v[..., :, :Rr*K]
 
-    # Factor-adapter path does not require RRQR band selection.
+    # Factor-adapter path does not require RRQR band selection during sampling.
     param['Band'] = None
     print('[INFO] Factor adapter enabled: skip RRQR band selection.')
 
@@ -230,7 +232,16 @@ if __name__ == "__main__":
     factor_optim = None
     if not opt['vanilla_hirdiff']:
         factor_adapter = SpectralFactorAdapter(Rr * K, Ch, hidden_channels=opt['factor_adapter_hidden']).to(device)
-        factor_adapter.init_base_from_matrix(E[0].detach())
+        if opt.get('factor_init', 'rrqr') == 'rrqr':
+            _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
+            band = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
+            coef = th.inverse(th.index_select(E, 1, band))
+            e_init = (E @ coef)[0].detach()
+            print('[INFO] Factor adapter base init: RRQR-conditioned spectral basis.')
+        else:
+            e_init = E[0].detach()
+            print('[INFO] Factor adapter base init: plain SVD spectral basis.')
+        factor_adapter.init_base_from_matrix(e_init)
         if opt['posterior_update_steps'] > 0:
             factor_optim = th.optim.Adam(factor_adapter.parameters(), lr=opt['factor_lr'])
 
