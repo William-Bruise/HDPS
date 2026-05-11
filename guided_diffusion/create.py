@@ -3,17 +3,40 @@ import torch.nn as nn
 
 
 class LightweightAdapter(nn.Module):
+    """
+    Bottleneck adapter with residual shortcut when channel size matches.
+    """
+
     def __init__(self, in_channels, out_channels, hidden_channels=16):
         super().__init__()
-        hidden_channels = max(1, hidden_channels)
-        self.adapter = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=True),
-            nn.SiLU(),
-            nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True),
-        )
+        hidden_channels = max(1, min(hidden_channels, in_channels, out_channels))
+
+        self.down = nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=True)
+        self.act = nn.SiLU()
+        self.up = nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True)
+        self.use_residual = in_channels == out_channels
 
     def forward(self, x):
-        return self.adapter(x)
+        out = self.up(self.act(self.down(x)))
+        if self.use_residual:
+            out = out + x
+        return out
+
+
+class SpectralFactorAdapter(nn.Module):
+    """
+    Lightweight adapter that maps rank-latent features to full spectral channels.
+    """
+
+    def __init__(self, in_channels, out_channels, hidden_channels=16):
+        super().__init__()
+        hidden_channels = max(1, min(hidden_channels, in_channels, out_channels))
+        self.down = nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=True)
+        self.act = nn.SiLU()
+        self.up = nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        return self.up(self.act(self.down(x)))
 
 def create_model_and_diffusion_RS(opt):
     model = define_G(opt['model'])

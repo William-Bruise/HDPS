@@ -52,16 +52,16 @@ run_config() {
   seen_configs[$key]=1
 
   if is_oom_risk "${step}" "${rank}" "${posterior_steps}" "${adapter_hidden}"; then
-    echo "[SEARCH][inpainting] skip high-risk OOM config: ${key}" | tee -a "${log_file}"
+    echo "[SEARCH][inpainting_factor] skip high-risk OOM config: ${key}" | tee -a "${log_file}"
     return 0
   fi
 
   run_id=$((run_id + 1))
   local run_log=".search_run_${run_id}.log"
 
-  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting_factor][run ${run_id}/${total_combos}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
 
-  if python main.py \
+  if python main_factor_adapter.py \
     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
     -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
     --dataroot "${dataroot}" --data_file "${data_file}" \
@@ -75,12 +75,12 @@ run_config() {
 
   if [[ "${run_status}" == "failed" ]]; then
     if grep -qiE "outofmemoryerror|cuda out of memory" "${run_log}"; then
-      echo "[SEARCH][inpainting][run ${run_id}] OOM detected, skip and continue." | tee -a "${log_file}"
+      echo "[SEARCH][inpainting_factor][run ${run_id}] OOM detected, skip and continue." | tee -a "${log_file}"
       rm -f "${run_log}"
       sleep 1
       return 0
     fi
-    echo "[SEARCH][inpainting][run ${run_id}] failed (non-OOM), stop." | tee -a "${log_file}"
+    echo "[SEARCH][inpainting_factor][run ${run_id}] failed (non-OOM), stop." | tee -a "${log_file}"
     rm -f "${run_log}"
     exit 1
   fi
@@ -112,7 +112,7 @@ PY
     fi
   fi
 
-  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting_factor][run ${run_id}/${total_combos}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
   rm -f "${run_log}"
   sleep 1
 }
@@ -134,9 +134,9 @@ run_full_grid() {
 }
 
 total_combos=$(( ${#eta1_grid[@]} * ${#eta2_grid[@]} * ${#k_grid[@]} * ${#step_grid[@]} * ${#rank_grid[@]} * ${#posterior_steps_grid[@]} ))
-echo "[SEARCH][inpainting] mode=grid total_combos=${total_combos}"
+echo "[SEARCH][inpainting_factor] mode=grid total_combos=${total_combos}"
 run_full_grid
 
-echo "[SEARCH][inpainting] search done"
-echo "[SEARCH][inpainting] best_psnr=${best_psnr}"
-echo "[SEARCH][inpainting] best_cfg=${best_cfg}"
+echo "[SEARCH][inpainting_factor] search done"
+echo "[SEARCH][inpainting_factor] best_psnr=${best_psnr}"
+echo "[SEARCH][inpainting_factor] best_cfg=${best_cfg}"
