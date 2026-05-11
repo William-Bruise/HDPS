@@ -230,6 +230,7 @@ if __name__ == "__main__":
     factor_optim = None
     if not opt['vanilla_hirdiff']:
         factor_adapter = SpectralFactorAdapter(Rr * K, Ch, hidden_channels=opt['factor_adapter_hidden']).to(device)
+        factor_adapter.init_base_from_matrix(E[0].detach())
         if opt['posterior_update_steps'] > 0:
             factor_optim = th.optim.Adam(factor_adapter.parameters(), lr=opt['factor_lr'])
 
