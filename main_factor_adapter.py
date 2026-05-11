@@ -1,0 +1,303 @@
+import argparse
+import os
+import time
+
+from utility import *
+import numpy as np
+import torch
+import torch as th
+import torch.nn.functional as nF
+from pathlib import Path
+from guided_diffusion import utils
+from guided_diffusion.create import create_model_and_diffusion_RS, LightweightAdapter, SpectralFactorAdapter
+import scipy.io as sio
+from collections import OrderedDict
+from os.path import join
+from skimage.metrics import peak_signal_noise_ratio as PSNR
+from skimage.metrics import structural_similarity as SSIM
+from guided_diffusion.core import imresize, blur_kernel
+from math import sqrt, log
+import warnings
+import matplotlib
+from utility.srrqr import srrqr_rank
+
+def resolve_input_path(opt):
+    input_path = Path(opt['dataroot'])
+    if not input_path.exists():
+        if opt['dataname'] == 'Houston':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_sr_{opt["task_params"]}/Houston_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Houston18/test/gauss_inpainting_{opt["task_params"]}/Houston_channel_cropped.mat'
+
+        if opt['dataname'] == 'WDC':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/WDC/test/gauss_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/WDC/test/gauss_sr_{opt["task_params"]}/wdc_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/WDC/test/gauss_inpainting_{opt["task_params"]}/wdc_cropped.mat'
+
+        if opt['dataname'] == 'Salinas':
+            if opt['task'] == 'denoise':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'sr':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_sr_{opt["task_params"]}/Salinas_channel_cropped.mat'
+            if opt['task'] == 'inpainting':
+                opt['dataroot'] = f'../data/Salinas/test/gauss_inpainting_{opt["task_params"]}/Salinas_channel_cropped.mat'
+
+    input_path = Path(opt['dataroot'])
+    if input_path.is_dir():
+        if opt['data_file']:
+            input_path = input_path / opt['data_file']
+            if not input_path.exists():
+                raise FileNotFoundError(f"Cannot find data file: {input_path}")
+        else:
+            mat_files = sorted(input_path.glob("*.mat"))
+            if not mat_files:
+                raise FileNotFoundError(f"No .mat file found under directory: {input_path}")
+            input_path = mat_files[0]
+            print(f"[INFO] Using first .mat file in directory: {input_path.name}")
+    return str(input_path)
+
+
+def build_observation_from_gt(opt, gt, task, ch):
+    sigma_from_param = float(opt['task_params']) if task == 'denoise' else 0.0
+    model_condition = {'gt': gt, 'sigma': sigma_from_param}
+    if task == 'inpainting':
+        mask_rate = float(opt['task_params'])
+        if not (0 <= mask_rate < 1):
+            raise ValueError(f"inpainting task_params should be in [0,1), got {mask_rate}")
+        model_condition['mask'] = (th.rand_like(gt) > mask_rate).float()
+        input_data = gt * model_condition['mask']
+        model_condition['transform'] = lambda x: x
+    elif task == 'sr':
+        k_s = 9
+        sig = sqrt(4 ** 2 / (8 * log(2)))
+        scale = float(opt['task_params'])
+        kernel = blur_kernel(k_s, sig)
+        kernel = th.from_numpy(kernel).repeat(ch,1,1,1).to(gt.device)
+        blur = partial(nF.conv2d, weight=kernel, padding=int((k_s - 1) / 2), groups=ch)
+        down = partial(imresize, scale=scale)
+        model_condition['transform'] = lambda x: down(blur(x))
+        input_data = model_condition['transform'](gt)
+    else:
+        sigma = float(opt['task_params'])
+        noise_std = sigma / 255.0
+        input_data = th.clamp(gt + noise_std * th.randn_like(gt), 0.0, 1.0)
+        model_condition['transform'] = lambda x: x
+    model_condition['input'] = input_data
+    return input_data, model_condition
+
+
+def parse_args_and_config():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--baseconfig', type=str, default='configs/base.json',
+                        help='JSON file for creating model and diffusion')
+    parser.add_argument('-dr', '--dataroot', type=str, default='data')  # dataroot with
+    parser.add_argument('--data_file', type=str, default='',
+                        help='Optional .mat file name when dataroot is a directory, e.g. car.mat')
+    parser.add_argument('-rs', '--resume_state', type=str,
+                        default='checkpoints/diffusion/I190000_E97')
+
+    # hyperparameters
+    parser.add_argument('-eta1', '--eta1', type=float, default=80)
+    parser.add_argument('-eta2', '--eta2', type=float, default=2)
+    parser.add_argument('--k', type=float, default=8)
+    parser.add_argument('-step', '--step', type=int, default=20)
+    parser.add_argument('--rank', type=int, default=3)
+    parser.add_argument('--posterior_update_steps', type=int, default=1)
+    parser.add_argument('--adapter_lr', type=float, default=1e-4)
+    parser.add_argument('--factor_lr', type=float, default=5e-3)
+    parser.add_argument('--adapter_hidden', type=int, default=16)
+    parser.add_argument('--factor_adapter_hidden', type=int, default=16)
+    parser.add_argument('--factor_init', type=str, default='rrqr', choices=['rrqr', 'svd'],
+                        help='Initialization for factor adapter base projection.')
+
+    # datasets
+    parser.add_argument('-dn', '--dataname', type=str, default='WDC',
+                        choices=['WDC', 'Houston', 'Salinas'])
+    parser.add_argument('--task', type=str, default='denoise',
+                        choices=['denoise', 'sr', 'inpainting'])
+    parser.add_argument('--task_params', type=str, default='50')
+
+    # settings
+    parser.add_argument('--beta_schedule', type=str, default='exp')
+    parser.add_argument('--beta_linear_start', type=float, default=1e-6)
+    parser.add_argument('--beta_linear_end', type=float, default=1e-2)
+    parser.add_argument('--cosine_s', type=float, default=0)
+    parser.add_argument('--no_rrqr', default=False, action='store_true')
+    parser.add_argument('--plot_psnr_curve', default=False, action='store_true',
+                        help='Plot PSNR-vs-iteration curve after sampling.')
+    parser.add_argument('--vanilla_hirdiff', default=False, action='store_true',
+                        help='Disable adapter and additive spectral matrix finetune (baseline HIR-Diff).')
+
+    parser.add_argument('-gpu', '--gpu_ids', type=str, default="1")
+    parser.add_argument('-seed', '--seed', type=int, default=0)
+    parser.add_argument('-bs', '--batch_size', type=int, default=1)
+    parser.add_argument('-sn', '--samplenum', type=int, default=1)
+    parser.add_argument('-sr', '--savedir', type=str, default='results')
+
+
+
+    ## parse configs
+    args = parser.parse_args()
+    args.eta1 *= 256*64
+    args.eta2 *= 8*64
+    opt = utils.parse(args)
+    opt = utils.dict_to_nonedict(opt)
+    return opt
+
+
+if __name__ == "__main__":
+    warnings.filterwarnings('ignore')
+    opt = parse_args_and_config()
+
+    gpu_ids = opt['gpu_ids']
+    if gpu_ids:
+        os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
+        device = th.device("cuda")
+        print('export CUDA_VISIBLE_DEVICES=' + gpu_ids)
+    else:
+        device = th.device("cpu")
+        print('use cpu')
+
+    ## create model and diffusion process
+    model, diffusion = create_model_and_diffusion_RS(opt)
+
+    ## load model
+    load_path = opt['resume_state']
+    gen_path = '{}_gen.pth'.format(load_path)
+    cks = th.load(gen_path)
+    new_cks = OrderedDict()
+    for k, v in cks.items():
+        newkey = k[11:] if k.startswith('denoise_fn.') else k
+        new_cks[newkey] = v
+    model.load_state_dict(new_cks, strict=False)
+    model.to(device)
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    ## seed
+    seeed = opt['seed']
+    seed_everywhere(seeed)
+
+    ## params
+    param = dict()
+    param['task'] = opt['task']
+    param['eta1'] = opt['eta1']
+    param['eta2'] = opt['eta2']
+    param['plot_psnr_curve'] = bool(opt.get('plot_psnr_curve', False))
+
+
+    opt['dataroot'] = resolve_input_path(opt)
+
+
+    data = sio.loadmat(opt['dataroot'])
+    if 'gt' not in data:
+        raise KeyError(f"Missing 'gt' in {opt['dataroot']}.")
+    data['gt'] = torch.from_numpy(data['gt']).permute(2, 0, 1).unsqueeze(0).float().to(device)
+    Ch, Hh, Ww = data['gt'].shape[1], data['gt'].shape[2], data['gt'].shape[3]
+    model_out_channels = int(opt['model']['out_channel'])
+    Rr = model_out_channels if opt['vanilla_hirdiff'] else opt['rank']  # spectral dimensionality of subspace
+    K = 1
+    data['input'], model_condition = build_observation_from_gt(opt, data['gt'], param['task'], Ch)
+
+    time_start = time.time()
+    u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))
+    E = v[..., :, :Rr*K]
+
+    # Factor-adapter path does not require RRQR band selection during sampling.
+    param['Band'] = None
+    print('[INFO] Factor adapter enabled: skip RRQR band selection.')
+
+    if not opt['vanilla_hirdiff']:
+        denoise_model = LightweightAdapter(
+            in_channels=model_out_channels,
+            out_channels=Rr * K,
+            hidden_channels=opt['adapter_hidden']
+        ).to(device)
+    else:
+        denoise_model = None
+
+    if opt['posterior_update_steps'] > 0 and denoise_model is not None:
+        denoise_optim = th.optim.Adam(denoise_model.parameters(), lr=opt['adapter_lr'])
+    else:
+        denoise_optim = None
+
+    factor_adapter = None
+    factor_optim = None
+    if not opt['vanilla_hirdiff']:
+        factor_adapter = SpectralFactorAdapter(Rr * K, Ch, hidden_channels=opt['factor_adapter_hidden']).to(device)
+        if opt.get('factor_init', 'rrqr') == 'rrqr':
+            _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
+            band = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
+            coef = th.inverse(th.index_select(E, 1, band))
+            e_init = (E @ coef)[0].detach()
+            print('[INFO] Factor adapter base init: RRQR-conditioned spectral basis.')
+        else:
+            e_init = E[0].detach()
+            print('[INFO] Factor adapter base init: plain SVD spectral basis.')
+        factor_adapter.init_base_from_matrix(e_init)
+        if opt['posterior_update_steps'] > 0:
+            factor_optim = th.optim.Adam(factor_adapter.parameters(), lr=opt['factor_lr'])
+
+    denoised_fn = {
+        'denoise_model': denoise_model,
+        'denoise_optim': denoise_optim,
+        'factor_adapter': factor_adapter,
+        'factor_optim': factor_optim,
+        'model_channels': model_out_channels,
+    }
+    param['posterior_update_steps'] = opt['posterior_update_steps']
+    param['vanilla_hirdiff'] = bool(opt.get('vanilla_hirdiff', False))
+    step = opt['step']
+    dname = opt['dataname']
+    for j in range(opt['samplenum']):
+        factor_params_before = None
+        if factor_adapter is not None:
+            factor_params_before = {k: v.detach().clone() for k, v in factor_adapter.state_dict().items()}
+        sample, E = diffusion.p_sample_loop(
+            model,
+            (1, Ch, Hh, Ww),
+            Rr=Rr,
+            step=step,
+            clip_denoised=True,
+            denoised_fn=denoised_fn,
+            model_condition=model_condition,
+            param=param,
+            save_root=None,
+            progress=True,
+        )
+        if param['Band'] is None:
+            K = 1
+        else:
+            K = int(len(param['Band']) / Rr)
+        sample = (sample + 1) / 2
+        if sample.shape[1] != Rr * K and denoise_model is not None:
+            sample = denoise_model(sample)
+        bsz = sample.shape[0]
+        if factor_adapter is not None:
+            im_out = factor_adapter(sample)
+        else:
+            im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
+        im_out = th.clip(im_out, 0, 1)
+
+        if factor_adapter is not None and factor_params_before is not None:
+            with th.no_grad():
+                delta = 0.0
+                for name, cur in factor_adapter.state_dict().items():
+                    delta += (cur - factor_params_before[name]).abs().mean().item()
+            print(f'[INFO] factor adapter param mean-abs delta: {delta:.6e}')
+        time_end = time.time()
+        time_cost = time_end - time_start
+
+        psnr_current = np.mean(cal_bwpsnr(im_out, data['gt']))
+        if psnr_current < diffusion.best_psnr:
+            im_out = diffusion.best_result
+
+        print('best psnr: %.2f, best ssim: %.2f,' %
+              (MSIQA(im_out, data['gt'])[0], MSIQA(im_out, data['gt'])[1]))
