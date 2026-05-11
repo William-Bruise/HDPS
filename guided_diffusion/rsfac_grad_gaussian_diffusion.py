@@ -165,17 +165,19 @@ class GaussianDiffusion:
         from tqdm import tqdm
         pbar = tqdm(enumerate(zip(indices, indices_next)), total=len(indices))
 
-        # coefficient matrix estimation: Eq.(14)
-        u, s, v = th.svd(model_condition['input'].reshape(Bb, Cc, -1).permute(0, 2, 1))
-        v[:, :, 1] *= -1
-        E = v[..., :, :Rr]
-        coef = th.inverse(th.index_select(E, 1, param['Band']))
-        E_base = E @ coef
-
         adapter_model = denoised_fn.get('denoise_model', None) if denoised_fn is not None else None
         adapter_optim = denoised_fn.get('denoise_optim', None) if denoised_fn is not None else None
         factor_adapter = denoised_fn.get('factor_adapter', None) if denoised_fn is not None else None
         factor_optim = denoised_fn.get('factor_optim', None) if denoised_fn is not None else None
+        E_base = None
+        if factor_adapter is None:
+            # coefficient matrix estimation: Eq.(14), only needed for RRQR reconstruction path
+            u, s, v = th.svd(model_condition['input'].reshape(Bb, Cc, -1).permute(0, 2, 1))
+            v[:, :, 1] *= -1
+            E = v[..., :, :Rr]
+            coef = th.inverse(th.index_select(E, 1, param['Band']))
+            E_base = E @ coef
+
         use_vanilla_hirdiff = bool(param.get('vanilla_hirdiff', False))
         if adapter_model is not None:
             adapter_model.train()
@@ -237,7 +239,7 @@ class GaussianDiffusion:
             xhat = (latent + 1) / 2
             if factor_adapter is not None:
                 xhat = factor_adapter(xhat)
-                E_tune = E_base
+                E_tune = th.empty(0, device=xhat.device)
             else:
                 E_tune = E_base
                 xhat = th.matmul(E_tune, xhat.reshape(Bb, Rr, -1)).reshape(*shape)

@@ -208,14 +208,9 @@ if __name__ == "__main__":
     u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))
     E = v[..., :, :Rr*K]
 
-    if not opt['no_rrqr']:
-        print('[INFO] RRQR backend: pure-python (utility.srrqr)')
-        _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
-        param['Band'] = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
-
-    else:
-        param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)
-    print(param['Band'])
+    # Factor-adapter path does not require RRQR band selection.
+    param['Band'] = None
+    print('[INFO] Factor adapter enabled: skip RRQR band selection.')
 
     if not opt['vanilla_hirdiff']:
         denoise_model = LightweightAdapter(
