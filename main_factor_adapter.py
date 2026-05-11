@@ -301,3 +301,14 @@ if __name__ == "__main__":
 
         print('best psnr: %.2f, best ssim: %.2f,' %
               (MSIQA(im_out, data['gt'])[0], MSIQA(im_out, data['gt'])[1]))
+        out_dir = Path(opt['savedir']) / 'factor_adapter' / opt['task']
+        out_dir.mkdir(parents=True, exist_ok=True)
+        mat_name = Path(opt['data_file']).stem if opt['data_file'] else Path(opt['dataroot']).stem
+        out_path = out_dir / f'{mat_name}_rank{Rr}_step{step}_psnr{MSIQA(im_out, data["gt"])[0]:.2f}.mat'
+        sio.savemat(str(out_path), {
+            'output': im_out.detach().cpu().squeeze(0).permute(1, 2, 0).numpy(),
+            'gt': data['gt'].detach().cpu().squeeze(0).permute(1, 2, 0).numpy(),
+            'task': opt['task'],
+            'task_params': opt['task_params'],
+        })
+        print(f'[INFO] Saved best output mat to: {out_path}')
