@@ -257,7 +257,10 @@ if __name__ == "__main__":
             save_root=None,
             progress=True,
         )
-        K = int(len(param['Band']) / Rr)
+        if param['Band'] is None:
+            K = 1
+        else:
+            K = int(len(param['Band']) / Rr)
         sample = (sample + 1) / 2
         if sample.shape[1] != Rr * K and denoise_model is not None:
             sample = denoise_model(sample)
