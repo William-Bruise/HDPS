@@ -29,6 +29,7 @@ adapter_hidden="128"
 extra_args=("$@")
 best_psnr="-inf"
 best_cfg=""
+best_mat_path=""
 run_id=0
 total_combos=0
 log_file="search_inpainting.log"
@@ -93,6 +94,14 @@ vals = re.findall(r'best psnr:\s*([0-9]+(?:\.[0-9]+)?)', text)
 print(vals[-1] if vals else "nan")
 PY
 )
+  local run_mat_path
+  run_mat_path=$(python - "${run_log}" <<'PY'
+import re, sys
+text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read()
+vals = re.findall(r'\[INFO\]\s+Saved best output mat to:\s*(.+)', text)
+print(vals[-1].strip() if vals else "")
+PY
+)
 
   if [[ "${run_psnr}" != "nan" ]]; then
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
@@ -109,6 +118,7 @@ PY
     if [[ "${better}" == "1" ]]; then
       best_psnr="${run_psnr}"
       best_cfg="eta1=${eta1}, eta2=${eta2}, k=${k}, step=${step}, rank=${rank}, posterior_update_steps=${posterior_steps}, adapter_lr=${adapter_lr}, factor_lr=${factor_lr}, adapter_hidden=${adapter_hidden}"
+      best_mat_path="${run_mat_path}"
     fi
   fi
 
@@ -140,3 +150,19 @@ run_full_grid
 echo "[SEARCH][inpainting_factor] search done"
 echo "[SEARCH][inpainting_factor] best_psnr=${best_psnr}"
 echo "[SEARCH][inpainting_factor] best_cfg=${best_cfg}"
+if [[ -n "${best_mat_path}" && -f "${best_mat_path}" ]]; then
+  summary_dir="results/search_best/inpainting_factor/task_params_${task_params}"
+  mkdir -p "${summary_dir}"
+  cp -f "${best_mat_path}" "${summary_dir}/best_output.mat"
+  cat > "${summary_dir}/best_params.txt" <<EOF
+best_psnr=${best_psnr}
+best_cfg=${best_cfg}
+source_mat=${best_mat_path}
+task=${task}
+task_params=${task_params}
+dataname=${dataname}
+data_file=${data_file}
+EOF
+  echo "[SEARCH][inpainting_factor] best mat saved to ${summary_dir}/best_output.mat"
+  echo "[SEARCH][inpainting_factor] best params saved to ${summary_dir}/best_params.txt"
+fi

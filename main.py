@@ -270,11 +270,23 @@ if __name__ == "__main__":
         out_dir = Path(opt['savedir']) / 'baseline' / opt['task']
         out_dir.mkdir(parents=True, exist_ok=True)
         mat_name = Path(opt['data_file']).stem if opt['data_file'] else Path(opt['dataroot']).stem
-        out_path = out_dir / f'{mat_name}_rank{Rr}_step{step}_psnr{MSIQA(im_out, data["gt"])[0]:.2f}.mat'
+        out_path = out_dir / f'{mat_name}_tp{opt["task_params"]}.mat'
         sio.savemat(str(out_path), {
             'output': im_out.detach().cpu().squeeze(0).permute(1, 2, 0).numpy(),
             'gt': data['gt'].detach().cpu().squeeze(0).permute(1, 2, 0).numpy(),
             'task': opt['task'],
             'task_params': opt['task_params'],
+            'eta1': opt['eta1'],
+            'eta2': opt['eta2'],
+            'k': opt['k'],
+            'step': opt['step'],
+            'rank': opt['rank'],
+            'posterior_update_steps': opt['posterior_update_steps'],
+            'adapter_lr': opt['adapter_lr'],
+            'factor_lr': opt['factor_lr'],
+            'adapter_hidden': opt['adapter_hidden'],
+            'beta_schedule': opt['beta_schedule'],
+            'dataname': opt['dataname'],
+            'data_file': opt['data_file'],
         })
         print(f'[INFO] Saved best output mat to: {out_path}')
