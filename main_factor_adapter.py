@@ -257,6 +257,9 @@ if __name__ == "__main__":
     step = opt['step']
     dname = opt['dataname']
     for j in range(opt['samplenum']):
+        factor_params_before = None
+        if factor_adapter is not None:
+            factor_params_before = {k: v.detach().clone() for k, v in factor_adapter.state_dict().items()}
         sample, E = diffusion.p_sample_loop(
             model,
             (1, Ch, Hh, Ww),
@@ -282,6 +285,13 @@ if __name__ == "__main__":
         else:
             im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
         im_out = th.clip(im_out, 0, 1)
+
+        if factor_adapter is not None and factor_params_before is not None:
+            with th.no_grad():
+                delta = 0.0
+                for name, cur in factor_adapter.state_dict().items():
+                    delta += (cur - factor_params_before[name]).abs().mean().item()
+            print(f'[INFO] factor adapter param mean-abs delta: {delta:.6e}')
         time_end = time.time()
         time_cost = time_end - time_start
 
