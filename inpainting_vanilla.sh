@@ -13,6 +13,7 @@ data_file="chaos_traffic.mat"
 dataname="Salinas"
 task="inpainting"
 task_params="0.8"
+inpaint_noise_sigma="0"
 gpu="2"
 beta_schedule="exp"
 
@@ -49,6 +50,7 @@ run_config() {
     --vanilla_hirdiff \
     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
     -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
+    --inpaint_noise_sigma "${inpaint_noise_sigma}" \
     --dataroot "${dataroot}" --data_file "${data_file}" \
     --rank "${rank}" \
     -gpu "${gpu}" --beta_schedule "${beta_schedule}" "${extra_args[@]}" | tee -a "${log_file}" "${run_log}"; then
