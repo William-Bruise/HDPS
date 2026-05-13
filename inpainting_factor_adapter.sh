@@ -12,6 +12,7 @@ data_file="chaos_traffic.mat"
 dataname="Salinas"
 task="inpainting"
 task_params="0.8"
+inpaint_noise_sigma="0"
 gpu="2"
 beta_schedule="exp"
 
@@ -47,6 +48,12 @@ run_config() {
   local eta1="$1" eta2="$2" k="$3" step="$4" rank="$5" posterior_steps="$6"
   local key="${eta1}|${eta2}|${k}|${step}|${rank}|${posterior_steps}|${adapter_lr}|${factor_lr}|${adapter_hidden}"
 
+  # Guard against invalid diffusion schedule shape parameter.
+  if [[ "${k}" == "0" || "${k}" == "0.0" ]]; then
+    echo "[SEARCH][inpainting_factor] skip invalid config (k must be > 0): ${key}" | tee -a "${log_file}"
+    return 0
+  fi
+
   if [[ -n "${seen_configs[$key]:-}" ]]; then
     return 0
   fi
@@ -65,6 +72,7 @@ run_config() {
   if python main_factor_adapter.py \
     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
     -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
+    --inpaint_noise_sigma "${inpaint_noise_sigma}" \
     --dataroot "${dataroot}" --data_file "${data_file}" \
     --rank "${rank}" --posterior_update_steps "${posterior_steps}" \
     --adapter_lr "${adapter_lr}" --factor_lr "${factor_lr}" --adapter_hidden "${adapter_hidden}" \
@@ -77,6 +85,12 @@ run_config() {
   if [[ "${run_status}" == "failed" ]]; then
     if grep -qiE "outofmemoryerror|cuda out of memory" "${run_log}"; then
       echo "[SEARCH][inpainting_factor][run ${run_id}] OOM detected, skip and continue." | tee -a "${log_file}"
+      rm -f "${run_log}"
+      sleep 1
+      return 0
+    fi
+    if grep -qiE "AssertionError|betas > 0|betas <= 1" "${run_log}"; then
+      echo "[SEARCH][inpainting_factor][run ${run_id}] invalid beta schedule params, skip and continue." | tee -a "${log_file}"
       rm -f "${run_log}"
       sleep 1
       return 0

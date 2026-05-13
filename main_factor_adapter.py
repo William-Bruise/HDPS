@@ -72,6 +72,9 @@ def build_observation_from_gt(opt, gt, task, ch):
             raise ValueError(f"inpainting task_params should be in [0,1), got {mask_rate}")
         model_condition['mask'] = (th.rand_like(gt) > mask_rate).float()
         input_data = gt * model_condition['mask']
+        inpaint_noise_sigma = float(opt.get('inpaint_noise_sigma', 0.0))
+        if inpaint_noise_sigma > 0:
+            input_data = th.clamp(input_data + (inpaint_noise_sigma / 255.0) * th.randn_like(input_data), 0.0, 1.0)
         model_condition['transform'] = lambda x: x
     elif task == 'sr':
         k_s = 9
@@ -122,6 +125,8 @@ def parse_args_and_config():
     parser.add_argument('--task', type=str, default='denoise',
                         choices=['denoise', 'sr', 'inpainting'])
     parser.add_argument('--task_params', type=str, default='50')
+    parser.add_argument('--inpaint_noise_sigma', type=float, default=0.0,
+                        help='Gaussian noise sigma added to inpainting observation after masking (in [0,255] scale).')
 
     # settings
     parser.add_argument('--beta_schedule', type=str, default='exp')
