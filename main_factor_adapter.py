@@ -9,7 +9,7 @@ import torch as th
 import torch.nn.functional as nF
 from pathlib import Path
 from guided_diffusion import utils
-from guided_diffusion.create import create_model_and_diffusion_RS, LightweightAdapter
+from guided_diffusion.create import create_model_and_diffusion_RS, LightweightAdapter, SpectralFactorAdapter
 import scipy.io as sio
 from collections import OrderedDict
 from os.path import join
@@ -115,6 +115,9 @@ def parse_args_and_config():
     parser.add_argument('--adapter_lr', type=float, default=1e-4)
     parser.add_argument('--factor_lr', type=float, default=5e-3)
     parser.add_argument('--adapter_hidden', type=int, default=16)
+    parser.add_argument('--factor_adapter_hidden', type=int, default=16)
+    parser.add_argument('--factor_init', type=str, default='rrqr', choices=['rrqr', 'svd'],
+                        help='Initialization for factor adapter base projection.')
 
     # datasets
     parser.add_argument('-dn', '--dataname', type=str, default='WDC',
@@ -212,14 +215,9 @@ if __name__ == "__main__":
     u, s, v = th.svd(model_condition['input'].reshape(1, Ch, -1).permute(0, 2, 1))
     E = v[..., :, :Rr*K]
 
-    if not opt['no_rrqr']:
-        print('[INFO] RRQR backend: pure-python (utility.srrqr)')
-        _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
-        param['Band'] = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
-
-    else:
-        param['Band'] = th.Tensor([Ch * i // (K * Rr + 1) for i in range(1, K * Rr + 1)]).type(th.int).to(device)
-    print(param['Band'])
+    # Factor-adapter path does not require RRQR band selection during sampling.
+    param['Band'] = None
+    print('[INFO] Factor adapter enabled: skip RRQR band selection.')
 
     if not opt['vanilla_hirdiff']:
         denoise_model = LightweightAdapter(
@@ -234,9 +232,29 @@ if __name__ == "__main__":
         denoise_optim = th.optim.Adam(denoise_model.parameters(), lr=opt['adapter_lr'])
     else:
         denoise_optim = None
+
+    factor_adapter = None
+    factor_optim = None
+    if not opt['vanilla_hirdiff']:
+        factor_adapter = SpectralFactorAdapter(Rr * K, Ch, hidden_channels=opt['factor_adapter_hidden']).to(device)
+        if opt.get('factor_init', 'rrqr') == 'rrqr':
+            _, _, p = srrqr_rank(E[0].cpu().numpy().T, 1.2, Rr)
+            band = th.tensor(np.sort(p[:Rr]), dtype=th.int, device=device)
+            coef = th.inverse(th.index_select(E, 1, band))
+            e_init = (E @ coef)[0].detach()
+            print('[INFO] Factor adapter base init: RRQR-conditioned spectral basis.')
+        else:
+            e_init = E[0].detach()
+            print('[INFO] Factor adapter base init: plain SVD spectral basis.')
+        factor_adapter.init_base_from_matrix(e_init)
+        if opt['posterior_update_steps'] > 0:
+            factor_optim = th.optim.Adam(factor_adapter.parameters(), lr=opt['factor_lr'])
+
     denoised_fn = {
         'denoise_model': denoise_model,
         'denoise_optim': denoise_optim,
+        'factor_adapter': factor_adapter,
+        'factor_optim': factor_optim,
         'model_channels': model_out_channels,
     }
     param['posterior_update_steps'] = opt['posterior_update_steps']
@@ -244,6 +262,9 @@ if __name__ == "__main__":
     step = opt['step']
     dname = opt['dataname']
     for j in range(opt['samplenum']):
+        factor_params_before = None
+        if factor_adapter is not None:
+            factor_params_before = {k: v.detach().clone() for k, v in factor_adapter.state_dict().items()}
         sample, E = diffusion.p_sample_loop(
             model,
             (1, Ch, Hh, Ww),
@@ -256,13 +277,26 @@ if __name__ == "__main__":
             save_root=None,
             progress=True,
         )
-        K = int(len(param['Band']) / Rr)
+        if param['Band'] is None:
+            K = 1
+        else:
+            K = int(len(param['Band']) / Rr)
         sample = (sample + 1) / 2
         if sample.shape[1] != Rr * K and denoise_model is not None:
             sample = denoise_model(sample)
         bsz = sample.shape[0]
-        im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
+        if factor_adapter is not None:
+            im_out = factor_adapter(sample)
+        else:
+            im_out = th.matmul(E, sample.reshape(bsz, Rr * K, -1)).reshape(bsz, Ch, Hh, Ww)
         im_out = th.clip(im_out, 0, 1)
+
+        if factor_adapter is not None and factor_params_before is not None:
+            with th.no_grad():
+                delta = 0.0
+                for name, cur in factor_adapter.state_dict().items():
+                    delta += (cur - factor_params_before[name]).abs().mean().item()
+            print(f'[INFO] factor adapter param mean-abs delta: {delta:.6e}')
         time_end = time.time()
         time_cost = time_end - time_start
 
@@ -272,7 +306,7 @@ if __name__ == "__main__":
 
         print('best psnr: %.2f, best ssim: %.2f,' %
               (MSIQA(im_out, data['gt'])[0], MSIQA(im_out, data['gt'])[1]))
-        out_dir = Path(opt['savedir']) / 'baseline' / opt['task']
+        out_dir = Path(opt['savedir']) / 'factor_adapter' / opt['task']
         out_dir.mkdir(parents=True, exist_ok=True)
         mat_name = Path(opt['data_file']).stem if opt['data_file'] else Path(opt['dataroot']).stem
         out_path = out_dir / f'{mat_name}_tp{opt["task_params"]}.mat'
@@ -290,6 +324,8 @@ if __name__ == "__main__":
             'adapter_lr': opt['adapter_lr'],
             'factor_lr': opt['factor_lr'],
             'adapter_hidden': opt['adapter_hidden'],
+            'factor_adapter_hidden': opt['factor_adapter_hidden'],
+            'factor_init': opt['factor_init'],
             'beta_schedule': opt['beta_schedule'],
             'dataname': opt['dataname'],
             'data_file': opt['data_file'],

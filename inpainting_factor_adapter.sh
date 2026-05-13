@@ -50,7 +50,7 @@ run_config() {
 
   # Guard against invalid diffusion schedule shape parameter.
   if [[ "${k}" == "0" || "${k}" == "0.0" ]]; then
-    echo "[SEARCH][inpainting] skip invalid config (k must be > 0): ${key}" | tee -a "${log_file}"
+    echo "[SEARCH][inpainting_factor] skip invalid config (k must be > 0): ${key}" | tee -a "${log_file}"
     return 0
   fi
 
@@ -60,16 +60,16 @@ run_config() {
   seen_configs[$key]=1
 
   if is_oom_risk "${step}" "${rank}" "${posterior_steps}" "${adapter_hidden}"; then
-    echo "[SEARCH][inpainting] skip high-risk OOM config: ${key}" | tee -a "${log_file}"
+    echo "[SEARCH][inpainting_factor] skip high-risk OOM config: ${key}" | tee -a "${log_file}"
     return 0
   fi
 
   run_id=$((run_id + 1))
   local run_log=".search_run_${run_id}.log"
 
-  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting_factor][run ${run_id}/${total_combos}] eta1=${eta1} eta2=${eta2} k=${k} step=${step} rank=${rank} posterior_steps=${posterior_steps} adapter_lr=${adapter_lr} factor_lr=${factor_lr} adapter_hidden=${adapter_hidden}" | tee -a "${log_file}"
 
-  if python main.py \
+  if python main_factor_adapter.py \
     -eta1 "${eta1}" -eta2 "${eta2}" --k "${k}" -step "${step}" \
     -dn "${dataname}" --task "${task}" --task_params "${task_params}" \
     --inpaint_noise_sigma "${inpaint_noise_sigma}" \
@@ -84,18 +84,18 @@ run_config() {
 
   if [[ "${run_status}" == "failed" ]]; then
     if grep -qiE "outofmemoryerror|cuda out of memory" "${run_log}"; then
-      echo "[SEARCH][inpainting][run ${run_id}] OOM detected, skip and continue." | tee -a "${log_file}"
+      echo "[SEARCH][inpainting_factor][run ${run_id}] OOM detected, skip and continue." | tee -a "${log_file}"
       rm -f "${run_log}"
       sleep 1
       return 0
     fi
     if grep -qiE "AssertionError|betas > 0|betas <= 1" "${run_log}"; then
-      echo "[SEARCH][inpainting][run ${run_id}] invalid beta schedule params, skip and continue." | tee -a "${log_file}"
+      echo "[SEARCH][inpainting_factor][run ${run_id}] invalid beta schedule params, skip and continue." | tee -a "${log_file}"
       rm -f "${run_log}"
       sleep 1
       return 0
     fi
-    echo "[SEARCH][inpainting][run ${run_id}] failed (non-OOM), stop." | tee -a "${log_file}"
+    echo "[SEARCH][inpainting_factor][run ${run_id}] failed (non-OOM), stop." | tee -a "${log_file}"
     rm -f "${run_log}"
     exit 1
   fi
@@ -136,7 +136,7 @@ PY
     fi
   fi
 
-  echo "[SEARCH][inpainting][run ${run_id}/${total_combos}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
+  echo "[SEARCH][inpainting_factor][run ${run_id}/${total_combos}] psnr=${run_psnr} | best_psnr=${best_psnr}" | tee -a "${log_file}"
   rm -f "${run_log}"
   sleep 1
 }
@@ -158,14 +158,14 @@ run_full_grid() {
 }
 
 total_combos=$(( ${#eta1_grid[@]} * ${#eta2_grid[@]} * ${#k_grid[@]} * ${#step_grid[@]} * ${#rank_grid[@]} * ${#posterior_steps_grid[@]} ))
-echo "[SEARCH][inpainting] mode=grid total_combos=${total_combos}"
+echo "[SEARCH][inpainting_factor] mode=grid total_combos=${total_combos}"
 run_full_grid
 
-echo "[SEARCH][inpainting] search done"
-echo "[SEARCH][inpainting] best_psnr=${best_psnr}"
-echo "[SEARCH][inpainting] best_cfg=${best_cfg}"
+echo "[SEARCH][inpainting_factor] search done"
+echo "[SEARCH][inpainting_factor] best_psnr=${best_psnr}"
+echo "[SEARCH][inpainting_factor] best_cfg=${best_cfg}"
 if [[ -n "${best_mat_path}" && -f "${best_mat_path}" ]]; then
-  summary_dir="results/search_best/inpainting/task_params_${task_params}"
+  summary_dir="results/search_best/inpainting_factor/task_params_${task_params}"
   mkdir -p "${summary_dir}"
   cp -f "${best_mat_path}" "${summary_dir}/best_output.mat"
   cat > "${summary_dir}/best_params.txt" <<EOF
@@ -177,6 +177,6 @@ task_params=${task_params}
 dataname=${dataname}
 data_file=${data_file}
 EOF
-  echo "[SEARCH][inpainting] best mat saved to ${summary_dir}/best_output.mat"
-  echo "[SEARCH][inpainting] best params saved to ${summary_dir}/best_params.txt"
+  echo "[SEARCH][inpainting_factor] best mat saved to ${summary_dir}/best_output.mat"
+  echo "[SEARCH][inpainting_factor] best params saved to ${summary_dir}/best_params.txt"
 fi
