@@ -8,10 +8,9 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 
 # data / task
 dataroot="data"
-data_file="chaos_traffic.mat"
-dataname="Salinas"
 task="inpainting"
-task_params="0.8"
+DATA_FILES=(animal_garden.mat car.mat chaos_traffic.mat fruit.mat ironman.mat)
+TASK_PARAMS=("0.7" "0.8" "0.9")
 inpaint_noise_sigma="0"
 gpu="2"
 beta_schedule="exp"
@@ -28,23 +27,25 @@ factor_lr="5e-3"
 adapter_hidden="128"
 
 extra_args=("$@")
-best_psnr="-inf"
-best_cfg=""
-best_mat_path=""
-run_id=0
-total_combos=0
-log_file="search_inpainting.log"
-result_file="search_inpainting_results.tsv"
-: > "${log_file}"
-: > "${result_file}"
-declare -A seen_configs
+adapter_mode="inpainting"
+
+
+run_single_case() {
+  local data_file="$1" task_params="$2"
+  local dataname="${data_file%.mat}"
+  local best_psnr="-inf" best_cfg="" best_mat_path=""
+  local run_id=0 total_combos=0
+  local log_file="search_${adapter_mode}_${dataname}_tp${task_params}.log"
+  local result_file="search_${adapter_mode}_${dataname}_tp${task_params}_results.tsv"
+  : > "${log_file}"; : > "${result_file}"
+  declare -A seen_configs=()
 
 is_oom_risk() {
   # Pre-filter is intentionally disabled: always try sampled configs.
   return 1
 }
 
-run_config() {
+  run_config() {
   local eta1="$1" eta2="$2" k="$3" step="$4" rank="$5" posterior_steps="$6"
   local key="${eta1}|${eta2}|${k}|${step}|${rank}|${posterior_steps}|${adapter_lr}|${factor_lr}|${adapter_hidden}"
 
@@ -141,7 +142,7 @@ PY
   sleep 1
 }
 
-run_full_grid() {
+  run_full_grid() {
   for eta1 in "${eta1_grid[@]}"; do
     for eta2 in "${eta2_grid[@]}"; do
       for k in "${k_grid[@]}"; do
@@ -157,26 +158,43 @@ run_full_grid() {
   done
 }
 
-total_combos=$(( ${#eta1_grid[@]} * ${#eta2_grid[@]} * ${#k_grid[@]} * ${#step_grid[@]} * ${#rank_grid[@]} * ${#posterior_steps_grid[@]} ))
-echo "[SEARCH][inpainting] mode=grid total_combos=${total_combos}"
-run_full_grid
+  total_combos=$(( ${#eta1_grid[@]} * ${#eta2_grid[@]} * ${#k_grid[@]} * ${#step_grid[@]} * ${#rank_grid[@]} * ${#posterior_steps_grid[@]} ))
+  echo "[SEARCH][inpainting] data=${dataname} task_params=${task_params} mode=grid total_combos=${total_combos}"
+  run_full_grid
 
-echo "[SEARCH][inpainting] search done"
-echo "[SEARCH][inpainting] best_psnr=${best_psnr}"
-echo "[SEARCH][inpainting] best_cfg=${best_cfg}"
-if [[ -n "${best_mat_path}" && -f "${best_mat_path}" ]]; then
-  summary_dir="results/search_best/inpainting/task_params_${task_params}"
-  mkdir -p "${summary_dir}"
-  cp -f "${best_mat_path}" "${summary_dir}/best_output.mat"
-  cat > "${summary_dir}/best_params.txt" <<EOF
+  echo "[SEARCH][inpainting] search done data=${dataname} task_params=${task_params}"
+  echo "[SEARCH][inpainting] best_psnr=${best_psnr}"
+  echo "[SEARCH][inpainting] best_cfg=${best_cfg}"
+  if [[ -n "${best_mat_path}" && -f "${best_mat_path}" ]]; then
+    summary_dir="results/search_best/inpainting"
+    mkdir -p "${summary_dir}"
+    output_mat="${summary_dir}/${dataname}_${task_params}.mat"
+    cp -f "${best_mat_path}" "${output_mat}"
+    cat > "${summary_dir}/${dataname}_${task_params}_best_params.txt" <<EOF
 best_psnr=${best_psnr}
 best_cfg=${best_cfg}
 source_mat=${best_mat_path}
+output_mat=${output_mat}
 task=${task}
 task_params=${task_params}
 dataname=${dataname}
 data_file=${data_file}
+eta1_grid=${eta1_grid[*]}
+eta2_grid=${eta2_grid[*]}
+k_grid=${k_grid[*]}
+step_grid=${step_grid[*]}
+rank_grid=${rank_grid[*]}
+posterior_steps_grid=${posterior_steps_grid[*]}
+adapter_lr=${adapter_lr}
+factor_lr=${factor_lr}
+adapter_hidden=${adapter_hidden}
 EOF
-  echo "[SEARCH][inpainting] best mat saved to ${summary_dir}/best_output.mat"
-  echo "[SEARCH][inpainting] best params saved to ${summary_dir}/best_params.txt"
-fi
+    echo "[SEARCH][inpainting] best mat saved to ${output_mat}"
+  fi
+}
+
+for data_file in "${DATA_FILES[@]}"; do
+  for task_params in "${TASK_PARAMS[@]}"; do
+    run_single_case "${data_file}" "${task_params}"
+  done
+done
