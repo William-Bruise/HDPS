@@ -32,7 +32,7 @@ adapter_mode="inpainting"
 
 run_single_case() {
   local data_file="$1" task_params="$2"
-  local dataname="${data_file%.mat}"
+  local dataname="${DATANAME:-Salinas}"
   local best_psnr="-inf" best_cfg="" best_mat_path=""
   local run_id=0 total_combos=0
   local log_file="search_${adapter_mode}_${dataname}_tp${task_params}.log"
